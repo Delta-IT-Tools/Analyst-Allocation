@@ -9,4 +9,4 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "capacity_tracker_db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "d80c5833-d572-4656-9ce6-b8900c2ca86b"
