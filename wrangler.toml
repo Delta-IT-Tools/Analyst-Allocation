@@ -9,4 +9,27 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "capacity_tracker_db"
-database_id = "d80c5833-d572-4656-9ce6-b8900c2ca86b"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# If you set SITE_PASSWORD and/or SESSION_SECRET via the dashboard's
+# "Secrets Store" binding option, declare them here too — otherwise every
+# deploy from this repo can silently wipe out bindings that only exist in
+# the dashboard, since `wrangler deploy` treats this file as the full
+# source of truth for the Worker's bindings.
+#
+# Skip a block below entirely if you instead set that secret with
+# `wrangler secret put SITE_PASSWORD` / `SESSION_SECRET` (a plain Worker
+# secret) — those already persist correctly and don't need this.
+#
+# Find your store_id on the "Secrets Store" tab in the Cloudflare dashboard.
+# secret_name is whatever name you gave the secret when you created it.
+
+# [[secrets_store_secrets]]
+# binding = "SITE_PASSWORD"
+# store_id = "REPLACE_WITH_YOUR_SECRETS_STORE_ID"
+# secret_name = "SITE_PASSWORD"
+
+# [[secrets_store_secrets]]
+# binding = "SESSION_SECRET"
+# store_id = "REPLACE_WITH_YOUR_SECRETS_STORE_ID"
+# secret_name = "SESSION_SECRET"

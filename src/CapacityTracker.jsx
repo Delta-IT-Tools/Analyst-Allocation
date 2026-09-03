@@ -137,6 +137,7 @@ export default function CapacityTracker() {
   const saveChain = useRef(Promise.resolve());
   const fileInputRef = useRef(null);
   const [showBackups, setShowBackups] = useState(false);
+  const [showNetworkDiagram, setShowNetworkDiagram] = useState(false);
   const [backupsList, setBackupsList] = useState([]);
   const [backupsLoading, setBackupsLoading] = useState(false);
   const [restoreNotice, setRestoreNotice] = useState("");
@@ -982,6 +983,32 @@ export default function CapacityTracker() {
       )}
       </>
       )}
+
+      <button
+        type="button"
+        className="ct-network-link"
+        onClick={() => setShowNetworkDiagram(true)}
+      >
+        Network diagram
+      </button>
+
+      {showNetworkDiagram && (
+        <div className="ct-network-backdrop" onClick={() => setShowNetworkDiagram(false)}>
+          <div className="ct-network-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ct-network-modal-head">
+              <h2>Deployment &amp; runtime architecture</h2>
+              <button type="button" className="ct-btn ct-btn-icon" onClick={() => setShowNetworkDiagram(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <NetworkDiagram />
+            <p className="ct-hint" style={{ marginTop: 10 }}>
+              A push to GitHub triggers Cloudflare Workers Build, which runs the build and deploys the Worker.
+              At runtime, the browser (behind the login) talks to the Worker, which serves the app and reads/writes the D1 database.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1027,6 +1054,57 @@ function AllocCard({ project, value, onCommit }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function NetworkDiagram() {
+  const navy = "#003759";
+  const teal = "#1F6F63";
+  const amber = "#B9791F";
+  const line = "#D9DCD1";
+  const ink = "#1B2320";
+
+  return (
+    <svg width="100%" viewBox="0 0 680 300" role="img" style={{ display: "block" }}>
+      <title>Deployment and runtime architecture</title>
+      <desc>
+        GitHub repo pushes trigger Cloudflare Workers Build, which builds and deploys the Cloudflare
+        Worker. At runtime, the browser talks to the Worker behind a login, which serves the app and
+        reads/writes the D1 database.
+      </desc>
+      <defs>
+        <marker id="ndArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke={ink} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </marker>
+      </defs>
+
+      <rect x="60" y="60" width="150" height="56" rx="8" fill="#F1F2ED" stroke={line} strokeWidth="1" />
+      <text x="135" y="80" textAnchor="middle" fontSize="14" fontWeight="600" fill={ink}>GitHub repo</text>
+      <text x="135" y="98" textAnchor="middle" fontSize="12" fill="#58635C">Source code</text>
+
+      <rect x="270" y="60" width="220" height="56" rx="8" fill="#F1F2ED" stroke={line} strokeWidth="1" />
+      <text x="380" y="80" textAnchor="middle" fontSize="14" fontWeight="600" fill={ink}>Cloudflare Workers Build</text>
+      <text x="380" y="98" textAnchor="middle" fontSize="12" fill="#58635C">npm run build + deploy</text>
+
+      <line x1="210" y1="88" x2="266" y2="88" stroke={ink} strokeWidth="1" markerEnd="url(#ndArrow)" />
+      <path d="M380,116 L380,158 L345,158 L345,196" fill="none" stroke={ink} strokeWidth="1" markerEnd="url(#ndArrow)" />
+      <text x="390" y="150" fontSize="12" fill="#58635C">deploys</text>
+
+      <rect x="60" y="200" width="140" height="56" rx="8" fill={navy} />
+      <text x="130" y="220" textAnchor="middle" fontSize="14" fontWeight="600" fill="#FFFFFF">Browser</text>
+      <text x="130" y="238" textAnchor="middle" fontSize="12" fill="rgba(255,255,255,0.8)">Login required</text>
+
+      <rect x="250" y="200" width="190" height="56" rx="8" fill={teal} />
+      <text x="345" y="220" textAnchor="middle" fontSize="14" fontWeight="600" fill="#FFFFFF">Cloudflare Worker</text>
+      <text x="345" y="238" textAnchor="middle" fontSize="12" fill="rgba(255,255,255,0.85)">Auth, assets, API</text>
+
+      <rect x="480" y="200" width="140" height="56" rx="8" fill={amber} />
+      <text x="550" y="220" textAnchor="middle" fontSize="14" fontWeight="600" fill="#FFFFFF">D1 database</text>
+      <text x="550" y="238" textAnchor="middle" fontSize="12" fill="rgba(255,255,255,0.85)">kv_store table</text>
+
+      <line x1="200" y1="228" x2="246" y2="228" stroke={ink} strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
+      <line x1="440" y1="228" x2="476" y2="228" stroke={ink} strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
+    </svg>
   );
 }
 
@@ -1274,7 +1352,7 @@ function Style() {
         color: var(--ink);
         background: linear-gradient(180deg, #90D5FF 0%, #005385 100%);
         padding: 18px;
-        border-radius: 14px;
+        border-radius: 0 0 14px 14px;
         max-width: 1600px;
         margin: 0 auto;
         zoom: 1.2;
@@ -1284,7 +1362,7 @@ function Style() {
         background: #5E7380;
         margin: -18px -18px 18px -18px;
         padding: 18px 18px 14px;
-        border-radius: 14px 14px 0 0;
+        border-radius: 0;
       }
       .ct-header .ct-brand h1 { color: #fff; }
       .ct-header .ct-brand p { color: #FFFFFF; }
@@ -1543,6 +1621,42 @@ function Style() {
       .ct-demand-track { height: 8px; background: #EEF0E8; border-radius: 6px; overflow: hidden; }
       .ct-demand-fill { height: 100%; }
       .ct-fte { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-soft); text-align: right; }
+      .ct-network-link {
+        position: fixed;
+        bottom: 16px;
+        right: 20px;
+        z-index: 40;
+        background: rgba(0, 55, 89, 0.85);
+        color: #FFFFFF;
+        border: none;
+        border-radius: 20px;
+        padding: 7px 14px;
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .ct-network-link:hover { background: #003759; }
+      .ct-network-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 20, 34, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        padding: 20px;
+      }
+      .ct-network-modal {
+        background: #FFFFFF;
+        border-radius: 14px;
+        padding: 20px;
+        max-width: 720px;
+        width: 100%;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+      .ct-network-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .ct-network-modal-head h2 { font-family: "Space Grotesk", sans-serif; font-size: 16px; margin: 0; color: var(--ink); }
       @media (max-width: 480px) {
         .ct-slider-row { grid-template-columns: 8px 80px 1fr 40px 10px; }
         .ct-member-row { grid-template-columns: 90px 1fr 44px 18px; }
