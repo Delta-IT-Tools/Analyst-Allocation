@@ -9,7 +9,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "capacity_tracker_db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "d80c5833-d572-4656-9ce6-b8900c2ca86b"
 
 # If you set SITE_PASSWORD and/or SESSION_SECRET via the dashboard's
 # "Secrets Store" binding option, declare them here too — otherwise every
@@ -24,12 +24,12 @@ database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 # Find your store_id on the "Secrets Store" tab in the Cloudflare dashboard.
 # secret_name is whatever name you gave the secret when you created it.
 
-# [[secrets_store_secrets]]
-# binding = "SITE_PASSWORD"
-# store_id = "REPLACE_WITH_YOUR_SECRETS_STORE_ID"
-# secret_name = "SITE_PASSWORD"
+[[secrets_store_secrets]]
+binding = "SITE_PASSWORD"
+store_id = "73a9bf3c60b640c0889b9e4f2ffc69c1"
+secret_name = "SITE_PASSWORD"
 
-# [[secrets_store_secrets]]
-# binding = "SESSION_SECRET"
-# store_id = "REPLACE_WITH_YOUR_SECRETS_STORE_ID"
-# secret_name = "SESSION_SECRET"
+[[secrets_store_secrets]]
+binding = "SESSION_SECRET"
+store_id = "73a9bf3c60b640c0889b9e4f2ffc69c1"
+secret_name = "SESSION_SECRET"
