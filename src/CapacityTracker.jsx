@@ -526,6 +526,7 @@ export default function CapacityTracker() {
       <Style />
 
       <header className="ct-header">
+      <div className="ct-header-inner">
 
       {loadError && (
         <div className="ct-load-error">
@@ -692,7 +693,10 @@ export default function CapacityTracker() {
       )}
       </>
 
+      </div>
       </header>
+
+      <div className="ct-content-wrap">
 
       {mode === "selfserve" ? (
         <SelfServeForm
@@ -984,6 +988,8 @@ export default function CapacityTracker() {
       </>
       )}
 
+      </div>
+
       <button
         type="button"
         className="ct-network-link"
@@ -1001,11 +1007,38 @@ export default function CapacityTracker() {
                 <X size={16} />
               </button>
             </div>
-            <NetworkDiagram />
-            <p className="ct-hint" style={{ marginTop: 10 }}>
-              A push to GitHub triggers Cloudflare Workers Build, which runs the build and deploys the Worker.
-              At runtime, the browser (behind the login) talks to the Worker, which serves the app and reads/writes the D1 database.
-            </p>
+            <div className="ct-diagram-visual">
+              <NetworkDiagram />
+              <p className="ct-diagram-caption">
+                A push to GitHub triggers Cloudflare Workers Build, which runs the build and deploys the Worker.
+                At runtime, the browser (behind the login) talks to the Worker, which serves the app and reads/writes the D1 database.
+              </p>
+              <p className="ct-diagram-caption" style={{ marginTop: 8 }}>
+                The GitHub and Cloudflare accounts hosting this tool are owned and managed by Anthony Sole.
+              </p>
+            </div>
+            <div className="ct-diagram-security">
+              <div className="ct-diagram-security-title">Additional Security Details</div>
+              <p className="ct-diagram-security-text">
+                Every request is checked by the Cloudflare Worker before any page content is served. This check happens on
+                the server, so it cannot be bypassed by viewing page source the way a password built into client-side
+                JavaScript could be.
+              </p>
+              <p className="ct-diagram-security-text">
+                The password itself is stored as a Cloudflare secret and never appears anywhere in the code or this
+                repository. A correct password sets a session cookie (HttpOnly, Secure, SameSite=Lax) whose value is
+                the session secret itself; the Worker checks this value on every request and keeps you signed in for
+                30 days without re-entering the password.
+              </p>
+              <p className="ct-diagram-security-text">
+                This is a single shared password for anyone who has it — there are no individual user accounts and no log
+                of who signed in.
+              </p>
+              <p className="ct-diagram-security-text">
+                The D1 database itself is not exposed to the internet directly — it's only reachable through the Worker's
+                own code via a private binding, encrypted at rest by Cloudflare, and isolated to this Cloudflare account.
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -1061,8 +1094,6 @@ function NetworkDiagram() {
   const navy = "#003759";
   const teal = "#1F6F63";
   const amber = "#B9791F";
-  const line = "#D9DCD1";
-  const ink = "#1B2320";
 
   return (
     <svg width="100%" viewBox="0 0 680 300" role="img" style={{ display: "block" }}>
@@ -1074,21 +1105,21 @@ function NetworkDiagram() {
       </desc>
       <defs>
         <marker id="ndArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M2 1L8 5L2 9" fill="none" stroke={ink} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </marker>
       </defs>
 
-      <rect x="60" y="60" width="150" height="56" rx="8" fill="#F1F2ED" stroke={line} strokeWidth="1" />
-      <text x="135" y="80" textAnchor="middle" fontSize="14" fontWeight="600" fill={ink}>GitHub repo</text>
+      <rect x="60" y="60" width="150" height="56" rx="8" fill="#FFFFFF" stroke="#c5ccd6" strokeWidth="1" />
+      <text x="135" y="80" textAnchor="middle" fontSize="14" fontWeight="600" fill="#1B2320">GitHub repo</text>
       <text x="135" y="98" textAnchor="middle" fontSize="12" fill="#58635C">Source code</text>
 
-      <rect x="270" y="60" width="220" height="56" rx="8" fill="#F1F2ED" stroke={line} strokeWidth="1" />
-      <text x="380" y="80" textAnchor="middle" fontSize="14" fontWeight="600" fill={ink}>Cloudflare Workers Build</text>
+      <rect x="270" y="60" width="220" height="56" rx="8" fill="#FFFFFF" stroke="#c5ccd6" strokeWidth="1" />
+      <text x="380" y="80" textAnchor="middle" fontSize="14" fontWeight="600" fill="#1B2320">Cloudflare Workers Build</text>
       <text x="380" y="98" textAnchor="middle" fontSize="12" fill="#58635C">npm run build + deploy</text>
 
-      <line x1="210" y1="88" x2="266" y2="88" stroke={ink} strokeWidth="1" markerEnd="url(#ndArrow)" />
-      <path d="M380,116 L380,158 L345,158 L345,196" fill="none" stroke={ink} strokeWidth="1" markerEnd="url(#ndArrow)" />
-      <text x="390" y="150" fontSize="12" fill="#58635C">deploys</text>
+      <line x1="210" y1="88" x2="266" y2="88" stroke="#FFFFFF" strokeWidth="1" markerEnd="url(#ndArrow)" />
+      <path d="M380,116 L380,158 L345,158 L345,196" fill="none" stroke="#FFFFFF" strokeWidth="1" markerEnd="url(#ndArrow)" />
+      <text x="390" y="150" fontSize="12" fill="#FFFFFF">deploys</text>
 
       <rect x="60" y="200" width="140" height="56" rx="8" fill={navy} />
       <text x="130" y="220" textAnchor="middle" fontSize="14" fontWeight="600" fill="#FFFFFF">Browser</text>
@@ -1102,8 +1133,8 @@ function NetworkDiagram() {
       <text x="550" y="220" textAnchor="middle" fontSize="14" fontWeight="600" fill="#FFFFFF">D1 database</text>
       <text x="550" y="238" textAnchor="middle" fontSize="12" fill="rgba(255,255,255,0.85)">kv_store table</text>
 
-      <line x1="200" y1="228" x2="246" y2="228" stroke={ink} strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
-      <line x1="440" y1="228" x2="476" y2="228" stroke={ink} strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
+      <line x1="200" y1="228" x2="246" y2="228" stroke="#FFFFFF" strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
+      <line x1="440" y1="228" x2="476" y2="228" stroke="#FFFFFF" strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
     </svg>
   );
 }
@@ -1350,19 +1381,26 @@ function Style() {
         --c-danger: #C1443C;
         font-family: "IBM Plex Sans", -apple-system, sans-serif;
         color: var(--ink);
-        background: linear-gradient(180deg, #90D5FF 0%, #005385 100%);
-        padding: 18px;
-        border-radius: 0 0 14px 14px;
-        max-width: 1600px;
-        margin: 0 auto;
+        background: linear-gradient(180deg, #9AC6E2 0%, #263138 100%);
+        width: 100%;
+        min-height: 100vh;
+        margin: 0;
         zoom: 1.2;
       }
       .ct-app * { box-sizing: border-box; }
+      .ct-content-wrap {
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 18px;
+      }
       .ct-header {
-        background: #5E7380;
-        margin: -18px -18px 18px -18px;
+        background: #334249;
+        width: 100%;
         padding: 18px 18px 14px;
-        border-radius: 0;
+      }
+      .ct-header-inner {
+        max-width: 1600px;
+        margin: 0 auto;
       }
       .ct-header .ct-brand h1 { color: #fff; }
       .ct-header .ct-brand p { color: #FFFFFF; }
@@ -1657,6 +1695,16 @@ function Style() {
       }
       .ct-network-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
       .ct-network-modal-head h2 { font-family: "Space Grotesk", sans-serif; font-size: 16px; margin: 0; color: var(--ink); }
+      .ct-diagram-visual {
+        background: linear-gradient(180deg, #9AC6E2 0%, #263138 100%);
+        border-radius: 10px;
+        padding: 16px;
+      }
+      .ct-diagram-caption { font-size: 13px; color: #FFFFFF; line-height: 1.5; margin: 12px 0 0; }
+      .ct-diagram-security { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+      .ct-diagram-security-title { font-size: 14px; font-weight: 700; color: var(--ink); margin: 0 0 8px; }
+      .ct-diagram-security-text { font-size: 13px; color: var(--ink-soft); line-height: 1.6; margin: 0 0 8px; }
+      .ct-diagram-security-text:last-child { margin-bottom: 0; }
       @media (max-width: 480px) {
         .ct-slider-row { grid-template-columns: 8px 80px 1fr 40px 10px; }
         .ct-member-row { grid-template-columns: 90px 1fr 44px 18px; }
