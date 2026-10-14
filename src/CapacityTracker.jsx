@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Check, AlertTriangle, Gauge, Bell, Download, Upload, History, FolderCog, Palette } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil } from "lucide-react";
 
 const PALETTE = [
   "#1F6F63",
@@ -60,6 +60,100 @@ function sortProjectsForResource(projects, allocationForResource) {
   });
 }
 
+// ---------- Allocation history ----------
+// data.history = { "YYYY-MM": { [memberId]: { [projectId]: pct } } }
+// One snapshot per analyst per month: every allocation change overwrites that
+// analyst's entry for the current month, so each month holds the last values
+// they submitted. Months with no update carry the previous values forward in
+// the Trends view (shown muted), minus any project retired before that month.
+
+function monthKeyFromDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function currentMonthKey() {
+  return monthKeyFromDate(new Date());
+}
+
+function monthKeyFromISO(iso) {
+  return iso && /^\d{4}-\d{2}/.test(iso) ? iso.slice(0, 7) : currentMonthKey();
+}
+
+function addMonths(key, n) {
+  const [y, m] = key.split("-").map(Number);
+  return monthKeyFromDate(new Date(y, m - 1 + n, 1));
+}
+
+function monthRange(start, end) {
+  const out = [];
+  let k = start;
+  while (k <= end && out.length < 240) {
+    out.push(k);
+    k = addMonths(k, 1);
+  }
+  return out;
+}
+
+function formatMonth(key) {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+}
+
+function pruneZeros(alloc) {
+  const out = {};
+  Object.entries(alloc || {}).forEach(([pid, v]) => {
+    if (v) out[pid] = v;
+  });
+  return out;
+}
+
+// Boards saved before history existed get a baseline: each analyst's current
+// allocation is recorded in the month they last updated it.
+function ensureHistory(d) {
+  if (d && d.history && typeof d.history === "object") return d;
+  const history = {};
+  ((d && d.members) || []).forEach((m) => {
+    const mk = monthKeyFromISO(m.lastUpdated);
+    history[mk] = history[mk] || {};
+    history[mk][m.id] = pruneZeros((d.allocations || {})[m.id]);
+  });
+  return { ...d, history };
+}
+
+// Returns one entry per month: { month, alloc, recorded }. alloc is null when
+// the analyst has no data yet; recorded is false when the values were carried
+// forward from an earlier month.
+function memberTimeline(data, memberId, months) {
+  const history = data.history || {};
+  const projById = {};
+  data.projects.forEach((p) => (projById[p.id] = p));
+  let last = null;
+  Object.keys(history)
+    .sort()
+    .forEach((mk) => {
+      if (mk < months[0] && history[mk] && memberId in history[mk]) last = history[mk][memberId];
+    });
+  return months.map((mk) => {
+    const rec = history[mk] && history[mk][memberId];
+    if (rec) {
+      last = rec;
+      return { month: mk, alloc: rec, recorded: true };
+    }
+    if (!last) return { month: mk, alloc: null, recorded: false };
+    const carried = {};
+    Object.entries(last).forEach(([pid, v]) => {
+      const p = projById[pid];
+      if (p && p.archived && p.archivedAt && monthKeyFromISO(p.archivedAt) < mk) return;
+      carried[pid] = v;
+    });
+    return { month: mk, alloc: carried, recorded: false };
+  });
+}
+
+function sumAlloc(alloc) {
+  return Object.values(alloc || {}).reduce((a, b) => a + b, 0);
+}
+
 // Seeded from SharePoint: ITKnowledgeBase / Analyst Allocation page
 const SEED_MEMBER_NAMES = ["Dusko", "Paul", "Sandy", "Diego", "Shelly", "Kim", "Bhaskar", "Carmen", "Brent"];
 // "Last updated" dates from the SharePoint page header (e.g. DUSKO 7.1 = July 1, 2026)
@@ -117,7 +211,7 @@ function buildSeedData() {
     });
   });
 
-  return { projects, members, allocations };
+  return ensureHistory({ projects, members, allocations });
 }
 
 export default function CapacityTracker() {
@@ -154,7 +248,7 @@ export default function CapacityTracker() {
     try {
       const res = await window.storage.get(DATA_KEY, true);
       if (res && res.value) {
-        setData(JSON.parse(res.value));
+        setData(ensureHistory(JSON.parse(res.value)));
       } else {
         // Key genuinely doesn't exist yet — this is a true first-time load.
         const seed = buildSeedData();
@@ -323,7 +417,7 @@ export default function CapacityTracker() {
       const res = await window.storage.get(key, true);
       if (res && res.value) {
         const parsed = JSON.parse(res.value);
-        persist(parsed, { recovery: true });
+        persist(ensureHistory(parsed), { recovery: true });
         setRestoreNotice(`Restored to snapshot from ${label}.`);
         setShowBackups(false);
       }
@@ -360,7 +454,7 @@ export default function CapacityTracker() {
             "Import this file? This will overwrite the current board with the data in this file."
           );
           if (confirmed) {
-            persist(parsed, { recovery: true });
+            persist(ensureHistory(parsed), { recovery: true });
             setRestoreNotice("Imported data from file.");
           }
         } else {
@@ -387,8 +481,13 @@ export default function CapacityTracker() {
     persist({ ...data, projects: [...data.projects, project] });
   }
 
-  function removeProject(id, name) {
-    const confirmed = window.confirm(`Remove "${name}"? This will also clear everyone's allocation on this project.`);
+  // Retiring hides a project from the live board and clears everyone's
+  // current allocation on it, but keeps the project (and its history) so the
+  // Trends view can still show past time spent on it.
+  function retireProject(id, name) {
+    const confirmed = window.confirm(
+      `Retire "${name}"? It will be removed from the board and everyone's current allocation on it will be cleared. Past allocations stay visible in Trends.`
+    );
     if (!confirmed) return;
     const allocations = {};
     Object.keys(data.allocations).forEach((mid) => {
@@ -396,7 +495,17 @@ export default function CapacityTracker() {
       delete rest[id];
       allocations[mid] = rest;
     });
-    persist({ ...data, projects: data.projects.filter((p) => p.id !== id), allocations });
+    const projects = data.projects.map((p) => (p.id === id ? { ...p, archived: true, archivedAt: todayISO() } : p));
+    persist({ ...data, projects, allocations });
+  }
+
+  function reactivateProject(id) {
+    const projects = data.projects.map((p) => {
+      if (p.id !== id) return p;
+      const { archived, archivedAt, ...rest } = p;
+      return rest;
+    });
+    persist({ ...data, projects });
   }
 
   function recolorProjectsByGroup() {
@@ -455,7 +564,8 @@ export default function CapacityTracker() {
         if (pct) {
           const projName = SEED_PROJECT_NAMES[projIdx];
           const projId = existingProjectNames.get(projName);
-          if (projId) allocations[m.id][projId] = pct;
+          const proj = data.projects.find((p) => p.id === projId);
+          if (projId && !(proj && proj.archived)) allocations[m.id][projId] = pct;
         }
       });
     });
@@ -486,7 +596,10 @@ export default function CapacityTracker() {
     const v = clamp(Math.round(value), 0, 100);
     const memberAlloc = { ...(data.allocations[memberId] || {}), [projectId]: v };
     const members = data.members.map((m) => (m.id === memberId ? { ...m, lastUpdated: todayISO() } : m));
-    persist({ ...data, allocations: { ...data.allocations, [memberId]: memberAlloc }, members });
+    const mk = currentMonthKey();
+    const history = { ...(ensureHistory(data).history) };
+    history[mk] = { ...(history[mk] || {}), [memberId]: pruneZeros(memberAlloc) };
+    persist({ ...data, allocations: { ...data.allocations, [memberId]: memberAlloc }, members, history });
   }
 
   function totalFor(memberId) {
@@ -532,9 +645,10 @@ export default function CapacityTracker() {
   }
 
   const currentUser = data.members.find((m) => m.id === currentUserId);
-  const selectedProject = data.projects.find((p) => p.id === selectedProjectId);
+  const activeProjects = data.projects.filter((p) => !p.archived);
+  const selectedProject = activeProjects.find((p) => p.id === selectedProjectId);
   const sortedMembers = [...data.members].sort((a, b) => totalFor(b.id) - totalFor(a.id));
-  const sortedProjects = [...data.projects].sort((a, b) => projectTotal(b.id) - projectTotal(a.id));
+  const sortedProjects = [...activeProjects].sort((a, b) => projectTotal(b.id) - projectTotal(a.id));
   const staleMembers = data.members.filter((m) => isStale(m.lastUpdated));
   const missingSeedMembers = SEED_MEMBER_NAMES.filter((name) => !data.members.some((m) => m.name === name));
 
@@ -580,106 +694,105 @@ export default function CapacityTracker() {
           <span className={`ct-save ct-save-${saveState}`}>
             {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : ""}
           </span>
+          <nav className="ct-header-links" aria-label="Board actions">
+            {addingMember ? (
+              <div className="ct-inline-form">
+                <input
+                  autoFocus
+                  placeholder="Teammate name"
+                  value={newMemberName}
+                  onChange={(e) => setNewMemberName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addMember(newMemberName);
+                    } else if (e.key === "Escape") {
+                      setAddingMember(false);
+                      setNewMemberName("");
+                    }
+                  }}
+                />
+                <button type="button" className="ct-btn ct-btn-icon" onClick={() => addMember(newMemberName)}><Check size={15} /></button>
+                <button type="button" className="ct-btn ct-btn-icon" onClick={() => { setAddingMember(false); setNewMemberName(""); }}><X size={15} /></button>
+              </div>
+            ) : (
+              <button type="button" className="ct-link" onClick={() => setAddingMember(true)}>
+                + Teammate
+              </button>
+            )}
+            <button type="button" className="ct-link" onClick={exportData} title="Download the current board as a JSON file you keep">
+              Export
+            </button>
+            <button type="button" className="ct-link" onClick={triggerImport} title="Restore the board from a previously exported JSON file">
+              Import
+            </button>
+            <input
+              type="file"
+              accept="application/json"
+              ref={fileInputRef}
+              onChange={handleImportFile}
+              style={{ display: "none" }}
+            />
+          </nav>
         </div>
       </div>
 
       <>
-      <div className="ct-addrow">
-        <button
-          className="ct-btn ct-mode-toggle"
-          onClick={() => {
-            setMode("dashboard");
-            setSelfServeSubmitted(false);
-          }}
-        >
-          <Gauge size={14} /> Dashboard
-        </button>
+      <nav className="ct-nav" aria-label="Main">
+        <div className="ct-tabs">
+          {[
+            { id: "dashboard", label: "Dashboard", icon: Gauge },
+            { id: "selfserve", label: "Update allocations", icon: Pencil },
+            { id: "trends", label: "Trends", icon: TrendingUp },
+            { id: "manageProjects", label: "Projects", icon: FolderCog },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = mode === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={active ? "ct-tab ct-tab-active" : "ct-tab"}
+                aria-current={active ? "page" : undefined}
+                onClick={() => {
+                  setMode(tab.id);
+                  if (tab.id === "dashboard" || tab.id === "selfserve") setSelfServeSubmitted(false);
+                }}
+              >
+                <Icon size={15} strokeWidth={2} /> {tab.label}
+              </button>
+            );
+          })}
+        </div>
 
-        <button
-          className="ct-btn"
-          onClick={() => {
-            setMode("manageProjects");
-          }}
-        >
-          <FolderCog size={14} /> Projects
-        </button>
-
-        {addingMember ? (
-          <div className="ct-inline-form">
-            <input
-              autoFocus
-              placeholder="Teammate name"
-              value={newMemberName}
-              onChange={(e) => setNewMemberName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addMember(newMemberName);
-                } else if (e.key === "Escape") {
-                  setAddingMember(false);
-                  setNewMemberName("");
-                }
-              }}
-            />
-            <button type="button" className="ct-btn ct-btn-icon" onClick={() => addMember(newMemberName)}><Check size={15} /></button>
-            <button type="button" className="ct-btn ct-btn-icon" onClick={() => { setAddingMember(false); setNewMemberName(""); }}><X size={15} /></button>
-          </div>
-        ) : (
-          <button className="ct-btn" onClick={() => setAddingMember(true)}>
-            <Plus size={14} /> Teammate
-          </button>
-        )}
-
-        {missingSeedMembers.length > 0 && (
+        <div className="ct-nav-utils">
+          {missingSeedMembers.length > 0 && (
+            <button
+              type="button"
+              className="ct-util ct-util-warn"
+              onClick={restoreMissingMembers}
+              title={`Missing: ${missingSeedMembers.join(", ")}`}
+            >
+              <Plus size={13} /> Restore team ({missingSeedMembers.length})
+            </button>
+          )}
           <button
-            className="ct-btn ct-restore-btn"
-            onClick={restoreMissingMembers}
-            title={`Missing: ${missingSeedMembers.join(", ")}`}
+            type="button"
+            className={showBackups ? "ct-util ct-util-on" : "ct-util"}
+            aria-expanded={showBackups}
+            onClick={() => {
+              setShowBackups((v) => !v);
+              if (!showBackups) loadBackupsList();
+            }}
+            title="See automatic recovery snapshots"
           >
-            <Plus size={14} /> Restore team ({missingSeedMembers.length})
+            <History size={13} /> Backups
           </button>
-        )}
-
-        <button
-          className="ct-btn ct-mode-toggle"
-          onClick={() => {
-            setMode("selfserve");
-            setSelfServeSubmitted(false);
-          }}
-        >
-          Update Allocations
-        </button>
-
-        <button className="ct-btn" onClick={exportData} title="Download the current board as a JSON file you keep">
-          <Download size={14} /> Export
-        </button>
-
-        <button className="ct-btn" onClick={triggerImport} title="Restore the board from a previously exported JSON file">
-          <Upload size={14} /> Import
-        </button>
-        <input
-          type="file"
-          accept="application/json"
-          ref={fileInputRef}
-          onChange={handleImportFile}
-          style={{ display: "none" }}
-        />
-
-        <button
-          className="ct-btn"
-          onClick={() => {
-            setShowBackups((v) => !v);
-            if (!showBackups) loadBackupsList();
-          }}
-          title="See automatic recovery snapshots"
-        >
-          <History size={14} /> Backups
-        </button>
-
-        <button className="ct-btn" onClick={createBackupNow} title="Save a recovery snapshot right now">
-          <Check size={14} /> Create backup
-        </button>
-      </div>
+          <button type="button" className="ct-util" onClick={createBackupNow} title="Save a recovery snapshot right now">
+            <Check size={13} /> Create backup
+          </button>
+        </div>
+      </nav>
 
       {restoreNotice && (
         <div className="ct-restore-notice">
@@ -743,10 +856,14 @@ export default function CapacityTracker() {
         <ProjectsManager
           data={data}
           addProject={addProject}
-          removeProject={removeProject}
+          retireProject={retireProject}
+          reactivateProject={reactivateProject}
           projectTotal={projectTotal}
           recolorProjectsByGroup={recolorProjectsByGroup}
+          formatDate={formatDate}
         />
+      ) : mode === "trends" ? (
+        <TrendsView data={data} statusColor={statusColor} />
       ) : (
       <>
       {data.members.length === 0 ? (
@@ -773,7 +890,7 @@ export default function CapacityTracker() {
                   onChange={(e) => setSelectedProjectId(e.target.value)}
                 >
                   <option value="">Choose a project…</option>
-                  {data.projects.map((p) => (
+                  {activeProjects.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
@@ -814,11 +931,11 @@ export default function CapacityTracker() {
                   </button>
                 </div>
 
-                {data.projects.length === 0 ? (
+                {activeProjects.length === 0 ? (
                   <p className="ct-hint">Add a project below to allocate time against it.</p>
                 ) : (
                   <div className="ct-alloc-cards">
-                    {sortProjectsForResource(data.projects, data.allocations[currentUser.id]).map((p) => {
+                    {sortProjectsForResource(activeProjects, data.allocations[currentUser.id]).map((p) => {
                       const val = (data.allocations[currentUser.id] || {})[p.id] || 0;
                       return (
                         <AllocCard
@@ -884,7 +1001,7 @@ export default function CapacityTracker() {
           </section>
 
           <section className="ct-panel">
-            {data.projects.length === 0 && (
+            {activeProjects.length === 0 && (
               <p className="ct-hint">Add a project so allocation can be tracked against it.</p>
             )}
             <div className="ct-table-wrap">
@@ -927,7 +1044,7 @@ export default function CapacityTracker() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.projects.map((p) => (
+                  {activeProjects.map((p) => (
                     <tr key={p.id}>
                       <td className="ct-td-name" title={p.name}>
                         <span className="ct-dot" style={{ background: p.color }} />
@@ -964,7 +1081,7 @@ export default function CapacityTracker() {
             <p className="ct-caption">FTE = full-time equivalent, the sum of allocated % on a project divided by 100.</p>
           </section>
 
-          {data.projects.length > 0 && (
+          {activeProjects.length > 0 && (
             <section className="ct-panel">
               <h2>Project demand</h2>
               <div className="ct-projects">
@@ -1179,7 +1296,9 @@ function AllocMessage({ total }) {
   return <div className="ct-msg ct-msg-muted">{100 - total}% unallocated.</div>;
 }
 
-function ProjectsManager({ data, addProject, removeProject, projectTotal, recolorProjectsByGroup }) {
+function ProjectsManager({ data, addProject, retireProject, reactivateProject, projectTotal, recolorProjectsByGroup, formatDate }) {
+  const activeProjects = data.projects.filter((p) => !p.archived);
+  const retiredProjects = data.projects.filter((p) => p.archived);
   const [name, setName] = useState("");
   const [confirmingRecolor, setConfirmingRecolor] = useState(false);
   const [recolorDone, setRecolorDone] = useState(false);
@@ -1230,7 +1349,7 @@ function ProjectsManager({ data, addProject, removeProject, projectTotal, recolo
           </p>
         )}
         <p className="ct-hint" style={{ marginBottom: 14 }}>
-          Add new projects or remove ones that are no longer active. Removing a project also clears everyone's allocation on it.
+          Add new projects or retire ones that are no longer live. Retiring a project takes it off the board and clears everyone's current allocation on it, but its past allocations stay visible in Trends.
         </p>
 
         <div className="ct-inline-form" style={{ marginBottom: 18 }}>
@@ -1251,11 +1370,11 @@ function ProjectsManager({ data, addProject, removeProject, projectTotal, recolo
           </button>
         </div>
 
-        {data.projects.length === 0 ? (
-          <p className="ct-hint">No projects yet — add your first one above.</p>
+        {activeProjects.length === 0 ? (
+          <p className="ct-hint">No live projects — add one above.</p>
         ) : (
           <div className="ct-projects-manage-list">
-            {data.projects.map((p) => (
+            {activeProjects.map((p) => (
               <div key={p.id} className="ct-backups-row">
                 <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="ct-dot" style={{ background: p.color }} />
@@ -1267,16 +1386,577 @@ function ProjectsManager({ data, addProject, removeProject, projectTotal, recolo
                 <button
                   type="button"
                   className="ct-btn ct-btn-icon"
-                  onClick={() => removeProject(p.id, p.name)}
-                  title={`Remove ${p.name}`}
+                  onClick={() => retireProject(p.id, p.name)}
+                  title={`Retire ${p.name}`}
                 >
-                  <X size={13} /> Remove
+                  <X size={13} /> Retire
                 </button>
               </div>
             ))}
           </div>
         )}
+
+        {retiredProjects.length > 0 && (
+          <>
+            <h2 style={{ marginTop: 22 }}>Retired projects</h2>
+            <p className="ct-hint" style={{ marginBottom: 10 }}>
+              Hidden from the board, kept for history. Reactivate one to put it back on the board (allocations start at 0%).
+            </p>
+            <div className="ct-projects-manage-list">
+              {retiredProjects.map((p) => (
+                <div key={p.id} className="ct-backups-row ct-retired-row">
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="ct-dot" style={{ background: p.color }} />
+                    {p.name}
+                    <span className="ct-retired-tag">Retired {p.archivedAt ? formatDate(p.archivedAt) : ""}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="ct-btn ct-btn-icon"
+                    onClick={() => reactivateProject(p.id)}
+                    title={`Reactivate ${p.name}`}
+                  >
+                    <Plus size={13} /> Reactivate
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </section>
+    </div>
+  );
+}
+
+const RANGE_OPTIONS = [
+  { value: "6", label: "Last 6 months" },
+  { value: "12", label: "Last 12 months" },
+  { value: "all", label: "All history" },
+];
+
+function TrendsView({ data, statusColor }) {
+  const [view, setView] = useState("analyst"); // "analyst" | "project"
+  const [memberId, setMemberId] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [range, setRange] = useState("12");
+
+  const history = data.history || {};
+  const historyMonths = Object.keys(history).sort();
+  const nowKey = currentMonthKey();
+  const earliest = historyMonths.length ? historyMonths[0] : nowKey;
+  const rangeStart = range === "all" ? earliest : addMonths(nowKey, -(Number(range) - 1));
+  const start = rangeStart > earliest ? rangeStart : earliest;
+  const months = monthRange(start <= nowKey ? start : nowKey, nowKey);
+
+  const member = data.members.find((m) => m.id === memberId);
+  const project = data.projects.find((p) => p.id === projectId);
+  const projById = {};
+  data.projects.forEach((p) => (projById[p.id] = p));
+  const timelines = {};
+  data.members.forEach((m) => (timelines[m.id] = memberTimeline(data, m.id, months)));
+
+  // Live projects first, then retired, each alphabetical
+  const projectOptions = [...data.projects].sort(
+    (x, y) => Number(!!x.archived) - Number(!!y.archived) || x.name.localeCompare(y.name)
+  );
+
+  function pickMember(id) {
+    setView("analyst");
+    setMemberId(id);
+  }
+
+  function pickProject(id) {
+    setView("project");
+    setProjectId(id);
+  }
+
+  return (
+    <div className="ct-trends">
+      <section className="ct-panel">
+        <div className="ct-panel-head-row">
+          <h2>Allocation trends</h2>
+          <div className="ct-identity-row" style={{ gap: 16 }}>
+            <div className="ct-segmented" role="tablist" aria-label="Trend view">
+              <button type="button" role="tab" aria-selected={view === "analyst"} className={view === "analyst" ? "ct-seg ct-seg-on" : "ct-seg"} onClick={() => setView("analyst")}>
+                By analyst
+              </button>
+              <button type="button" role="tab" aria-selected={view === "project"} className={view === "project" ? "ct-seg ct-seg-on" : "ct-seg"} onClick={() => setView("project")}>
+                By project
+              </button>
+            </div>
+            {view === "analyst" ? (
+              <div className="ct-identity">
+                <label htmlFor="ct-trend-who">Analyst</label>
+                <select id="ct-trend-who" value={memberId} onChange={(e) => setMemberId(e.target.value)}>
+                  <option value="">Whole team</option>
+                  {data.members.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="ct-identity">
+                <label htmlFor="ct-trend-proj">Project</label>
+                <select id="ct-trend-proj" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                  <option value="">All projects</option>
+                  {projectOptions.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}{p.archived ? " (retired)" : ""}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="ct-identity">
+              <label htmlFor="ct-trend-range">Range</label>
+              <select id="ct-trend-range" value={range} onChange={(e) => setRange(e.target.value)}>
+                {RANGE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+        <p className="ct-hint" style={{ marginBottom: 12 }}>
+          A snapshot is kept each month from whatever each analyst last submitted. Grey values were carried forward from an earlier month because no update was made that month.
+          {historyMonths.length <= 1 && " History starts building from here, so trends will fill in as monthly updates come in."}
+        </p>
+
+        {view === "analyst" ? (
+          member ? (
+            <MemberTrend data={data} member={member} months={months} projById={projById} statusColor={statusColor} />
+          ) : (
+            <TeamTrend data={data} months={months} statusColor={statusColor} onPick={pickMember} />
+          )
+        ) : project ? (
+          <ProjectTrend data={data} project={project} months={months} timelines={timelines} onPickMember={pickMember} />
+        ) : (
+          <AllProjectsTrend data={data} months={months} timelines={timelines} projectOptions={projectOptions} onPick={pickProject} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+// For one project, each analyst's % on it per month, plus whether that
+// analyst actually updated that month (vs. carried forward).
+function projectContributions(data, projectId, months, timelines) {
+  return months.map((mk, i) => {
+    const byMember = {};
+    let total = 0;
+    let anyRecorded = false;
+    let anyData = false;
+    data.members.forEach((m) => {
+      const t = timelines[m.id][i];
+      if (!t.alloc) return;
+      anyData = true;
+      const v = t.alloc[projectId] || 0;
+      if (v) {
+        byMember[m.id] = v;
+        total += v;
+        if (t.recorded) anyRecorded = true;
+      }
+    });
+    return { month: mk, byMember, total, recorded: total === 0 || anyRecorded, anyData };
+  });
+}
+
+function formatFTE(pctTotal) {
+  return (pctTotal / 100).toFixed(1);
+}
+
+function AllProjectsTrend({ data, months, timelines, projectOptions, onPick }) {
+  const rows = projectOptions
+    .map((p) => ({ p, cols: projectContributions(data, p.id, months, timelines) }))
+    // Retired projects only appear if they had time logged in this range
+    .filter((r) => !r.p.archived || r.cols.some((c) => c.total > 0));
+  const last = (r) => r.cols[r.cols.length - 1].total;
+  rows.sort((x, y) => Number(!!x.p.archived) - Number(!!y.p.archived) || last(y) - last(x) || x.p.name.localeCompare(y.p.name));
+
+  const teamTotals = months.map((_, i) => rows.reduce((sum, r) => sum + r.cols[i].total, 0));
+
+  return (
+    <div className="ct-table-wrap">
+      <table className="ct-trend-table">
+        <thead>
+          <tr>
+            <th className="ct-trend-th-name">Project FTE</th>
+            {months.map((mk) => (
+              <th key={mk}>{formatMonth(mk)}</th>
+            ))}
+            <th title="Change in FTE from the first month to the latest month">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ p, cols }) => {
+            const firstCol = cols.find((c) => c.anyData);
+            const delta = firstCol ? (last({ cols }) - firstCol.total) / 100 : 0;
+            return (
+              <tr key={p.id} className={p.archived ? "ct-trend-row-retired" : undefined}>
+                <td className="ct-trend-td-name" title={p.name}>
+                  <span className="ct-dot" style={{ background: p.color }} />
+                  <button type="button" className="ct-trend-name-btn ct-td-name-text" onClick={() => onPick(p.id)} title={`See who worked on ${p.name}`}>
+                    {p.name}
+                  </button>
+                  {p.archived && <span className="ct-retired-tag">Retired</span>}
+                </td>
+                {cols.map((c) => {
+                  if (!c.anyData) return <td key={c.month} className="ct-trend-cell ct-trend-none">–</td>;
+                  return (
+                    <td
+                      key={c.month}
+                      className={c.recorded ? "ct-trend-cell" : "ct-trend-cell ct-trend-carried"}
+                      title={c.recorded ? undefined : "Nobody on this project updated this month — carried forward"}
+                    >
+                      {c.total ? formatFTE(c.total) : <span className="ct-td-empty">–</span>}
+                    </td>
+                  );
+                })}
+                <td className="ct-trend-cell ct-trend-delta" style={{ color: delta > 0 ? "var(--c-teal)" : delta < 0 ? "var(--c-danger)" : "var(--ink-soft)" }}>
+                  {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td className="ct-trend-td-name ct-foot-label">Team total</td>
+            {teamTotals.map((t, i) => (
+              <td key={months[i]} className="ct-trend-cell ct-trend-total">{formatFTE(t)}</td>
+            ))}
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+      <p className="ct-caption">FTE = sum of everyone's % on the project that month ÷ 100. Click a project to see who the time came from.</p>
+    </div>
+  );
+}
+
+function ProjectTrend({ data, project, months, timelines, onPickMember }) {
+  const cols = projectContributions(data, project.id, months, timelines);
+  const memberIds = data.members
+    .map((m) => m.id)
+    .filter((id) => cols.some((c) => c.byMember[id]));
+
+  if (memberIds.length === 0) {
+    return <p className="ct-hint">No time was logged against {project.name} in this range.</p>;
+  }
+
+  const lastCol = cols[cols.length - 1];
+  const firstCol = cols.find((c) => c.anyData);
+  memberIds.sort((a, b) => (lastCol.byMember[b] || 0) - (lastCol.byMember[a] || 0) || cols.reduce((s, c) => s + (c.byMember[b] || 0) - (c.byMember[a] || 0), 0));
+  const memberById = {};
+  data.members.forEach((m) => (memberById[m.id] = m));
+  const colorFor = {};
+  memberIds.forEach((id, i) => (colorFor[id] = PALETTE[i % PALETTE.length]));
+
+  const series = memberIds.map((id) => ({ id, name: memberById[id].name, color: colorFor[id] }));
+  const columns = cols.map((c) => ({ month: c.month, values: c.anyData ? c.byMember : null, recorded: c.recorded }));
+
+  return (
+    <>
+      {project.archived && (
+        <p className="ct-hint" style={{ marginBottom: 8 }}>
+          <span className="ct-retired-tag" style={{ marginLeft: 0 }}>Retired {project.archivedAt ? formatMonth(monthKeyFromISO(project.archivedAt)) : ""}</span> No time is carried forward after the month it was retired.
+        </p>
+      )}
+      <TrendChart columns={columns} series={series} unit="fte" />
+
+      <div className="ct-trend-legend">
+        {series.map((sr) => (
+          <span key={sr.id} className="ct-trend-legend-item">
+            <span className="ct-dot" style={{ background: sr.color }} />
+            {sr.name}
+          </span>
+        ))}
+      </div>
+
+      <div className="ct-table-wrap">
+        <table className="ct-trend-table">
+          <thead>
+            <tr>
+              <th className="ct-trend-th-name">Analyst</th>
+              {months.map((mk) => (
+                <th key={mk}>{formatMonth(mk)}</th>
+              ))}
+              <th title="Change from the first month with data to the latest month, in percentage points">Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            {memberIds.map((id) => {
+              const first = firstCol ? firstCol.byMember[id] || 0 : 0;
+              const delta = (lastCol.byMember[id] || 0) - first;
+              return (
+                <tr key={id}>
+                  <td className="ct-trend-td-name">
+                    <span className="ct-dot" style={{ background: colorFor[id] }} />
+                    <button type="button" className="ct-trend-name-btn" onClick={() => onPickMember(id)} title={`See ${memberById[id].name}'s full project mix`}>
+                      {memberById[id].name}
+                    </button>
+                  </td>
+                  {cols.map((c, i) => {
+                    const t = timelines[id][i];
+                    if (!t.alloc) return <td key={c.month} className="ct-trend-cell ct-trend-none">–</td>;
+                    const v = c.byMember[id] || 0;
+                    const prevT = i > 0 ? timelines[id][i - 1] : null;
+                    const prev = prevT && prevT.alloc ? prevT.alloc[project.id] || 0 : null;
+                    const changed = t.recorded && prev !== null && prev !== v;
+                    const cls = ["ct-trend-cell", !t.recorded && "ct-trend-carried", changed && "ct-trend-changed"].filter(Boolean).join(" ");
+                    return (
+                      <td key={c.month} className={cls} title={changed ? `Changed from ${prev}%` : undefined}>
+                        {v ? `${v}%` : <span className="ct-td-empty">–</span>}
+                      </td>
+                    );
+                  })}
+                  <td className="ct-trend-cell ct-trend-delta" style={{ color: delta > 0 ? "var(--c-teal)" : delta < 0 ? "var(--c-danger)" : "var(--ink-soft)" }}>
+                    {delta > 0 ? `+${delta}` : delta}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="ct-trend-td-name ct-foot-label">FTE</td>
+              {cols.map((c) => (
+                <td key={c.month} className={c.recorded ? "ct-trend-cell ct-trend-total" : "ct-trend-cell ct-trend-total ct-trend-carried"}>
+                  {c.anyData ? formatFTE(c.total) : "–"}
+                </td>
+              ))}
+              <td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p className="ct-caption">Bold values changed from the month before. Click a name to see that analyst's full project mix.</p>
+    </>
+  );
+}
+
+function TeamTrend({ data, months, statusColor, onPick }) {
+  return (
+    <div className="ct-table-wrap">
+      <table className="ct-trend-table">
+        <thead>
+          <tr>
+            <th className="ct-trend-th-name">Total allocation</th>
+            {months.map((mk) => (
+              <th key={mk}>{formatMonth(mk)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.members.map((m) => {
+            const timeline = memberTimeline(data, m.id, months);
+            return (
+              <tr key={m.id}>
+                <td className="ct-trend-td-name">
+                  <button type="button" className="ct-trend-name-btn" onClick={() => onPick(m.id)} title={`See ${m.name}'s project breakdown`}>
+                    {m.name}
+                  </button>
+                </td>
+                {timeline.map((t) => {
+                  if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
+                  const total = sumAlloc(t.alloc);
+                  return (
+                    <td
+                      key={t.month}
+                      className={t.recorded ? "ct-trend-cell" : "ct-trend-cell ct-trend-carried"}
+                      style={t.recorded ? { color: statusColor(total) } : undefined}
+                      title={t.recorded ? "Updated this month" : "No update this month — carried forward"}
+                    >
+                      {total}%
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="ct-caption">Click a name to see how their time was split across projects.</p>
+    </div>
+  );
+}
+
+function MemberTrend({ data, member, months, projById, statusColor }) {
+  const timeline = memberTimeline(data, member.id, months);
+
+  // Every project this analyst had time on during the range, live or retired
+  const lastValue = {};
+  const everSum = {};
+  timeline.forEach((t) => {
+    Object.entries(t.alloc || {}).forEach(([pid, v]) => {
+      everSum[pid] = (everSum[pid] || 0) + v;
+    });
+  });
+  const latest = timeline[timeline.length - 1];
+  Object.keys(everSum).forEach((pid) => (lastValue[pid] = (latest.alloc || {})[pid] || 0));
+  const projectIds = Object.keys(everSum)
+    .filter((pid) => projById[pid])
+    .sort((a, b) => lastValue[b] - lastValue[a] || everSum[b] - everSum[a] || projById[a].name.localeCompare(projById[b].name));
+
+  if (projectIds.length === 0) {
+    return <p className="ct-hint">No allocation history for {member.name} in this range yet.</p>;
+  }
+
+  const firstWithData = timeline.find((t) => t.alloc);
+
+  return (
+    <>
+      <TrendChart
+        columns={timeline.map((t) => ({ month: t.month, values: t.alloc, recorded: t.recorded }))}
+        series={projectIds.map((pid) => ({ id: pid, name: projById[pid].name, color: projById[pid].color, hatched: !!projById[pid].archived }))}
+        unit="pct"
+      />
+
+      <div className="ct-trend-legend">
+        {projectIds.map((pid) => {
+          const p = projById[pid];
+          return (
+            <span key={pid} className={p.archived ? "ct-trend-legend-item ct-trend-legend-retired" : "ct-trend-legend-item"}>
+              <span className="ct-dot" style={{ background: p.color }} />
+              {p.name}
+              {p.archived && <span className="ct-retired-tag">Retired</span>}
+            </span>
+          );
+        })}
+      </div>
+
+      <div className="ct-table-wrap">
+        <table className="ct-trend-table">
+          <thead>
+            <tr>
+              <th className="ct-trend-th-name">Project</th>
+              {months.map((mk) => (
+                <th key={mk}>{formatMonth(mk)}</th>
+              ))}
+              <th title="Change from the first month with data to the latest month">Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projectIds.map((pid) => {
+              const p = projById[pid];
+              const first = firstWithData ? (firstWithData.alloc[pid] || 0) : 0;
+              const delta = lastValue[pid] - first;
+              return (
+                <tr key={pid} className={p.archived ? "ct-trend-row-retired" : undefined}>
+                  <td className="ct-trend-td-name" title={p.name}>
+                    <span className="ct-dot" style={{ background: p.color }} />
+                    <span className="ct-td-name-text">{p.name}</span>
+                    {p.archived && <span className="ct-retired-tag">Retired</span>}
+                  </td>
+                  {timeline.map((t, i) => {
+                    if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
+                    const v = t.alloc[pid] || 0;
+                    const prev = i > 0 && timeline[i - 1].alloc ? timeline[i - 1].alloc[pid] || 0 : null;
+                    const changed = t.recorded && prev !== null && prev !== v;
+                    const cls = ["ct-trend-cell", !t.recorded && "ct-trend-carried", changed && "ct-trend-changed"].filter(Boolean).join(" ");
+                    return (
+                      <td key={t.month} className={cls} title={changed ? `Changed from ${prev}%` : undefined}>
+                        {v ? `${v}%` : <span className="ct-td-empty">–</span>}
+                      </td>
+                    );
+                  })}
+                  <td className="ct-trend-cell ct-trend-delta" style={{ color: delta > 0 ? "var(--c-teal)" : delta < 0 ? "var(--c-danger)" : "var(--ink-soft)" }}>
+                    {delta > 0 ? `+${delta}` : delta}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="ct-trend-td-name ct-foot-label">Total</td>
+              {timeline.map((t) => {
+                if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
+                const total = sumAlloc(t.alloc);
+                return (
+                  <td key={t.month} className={t.recorded ? "ct-trend-cell ct-trend-total" : "ct-trend-cell ct-trend-total ct-trend-carried"} style={t.recorded ? { color: statusColor(total) } : undefined}>
+                    {total}%
+                  </td>
+                );
+              })}
+              <td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p className="ct-caption">Bold values changed from the month before. Change compares the first month with data to the latest month, in percentage points.</p>
+    </>
+  );
+}
+
+// Stacked monthly bars. columns: [{ month, values: {seriesId: pct} | null, recorded }]
+// series: [{ id, name, color, hatched }] in stacking order (bottom first).
+// unit "pct" labels bars as % with a dashed 100% capacity line; "fte" labels as FTE.
+function TrendChart({ columns, series, unit }) {
+  const W = 760;
+  const H = 240;
+  const padL = 40;
+  const padR = 12;
+  const padT = 22;
+  const padB = 26;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const isFte = unit === "fte";
+  const maxTotal = Math.max(isFte ? 25 : 100, ...columns.map((c) => sumAlloc(c.values)));
+  const step = isFte ? (maxTotal > 400 ? 100 : 50) : maxTotal > 150 ? 50 : 25;
+  const yMax = Math.ceil(maxTotal / step) * step;
+  const slot = plotW / columns.length;
+  const barW = Math.min(46, slot * 0.62);
+  const y = (v) => padT + plotH - (v / yMax) * plotH;
+  const fmt = (v) => (isFte ? formatFTE(v) : `${v}%`);
+  const ticks = [];
+  for (let v = 0; v <= yMax; v += step) ticks.push(v);
+
+  return (
+    <div className="ct-trend-chart">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={isFte ? "Monthly FTE by analyst" : "Monthly allocation by project"}>
+        <defs>
+          <pattern id="ctRetiredHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(255,255,255,0.55)" strokeWidth="2.5" />
+          </pattern>
+        </defs>
+        {ticks.map((v) => {
+          const capacity = !isFte && v === 100;
+          return (
+            <g key={v}>
+              <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke={capacity ? "#58635C" : "#E3E5DD"} strokeDasharray={capacity ? "4 3" : undefined} strokeWidth="1" />
+              <text x={padL - 6} y={y(v) + 4} textAnchor="end" fontSize="11" fill="#58635C">{fmt(v)}</text>
+            </g>
+          );
+        })}
+        {columns.map((c, i) => {
+          const cx = padL + slot * i + slot / 2;
+          const x = cx - barW / 2;
+          let acc = 0;
+          const total = sumAlloc(c.values);
+          return (
+            <g key={c.month} opacity={c.recorded ? 1 : 0.45}>
+              {c.values &&
+                series.map((sr) => {
+                  const v = c.values[sr.id] || 0;
+                  if (!v) return null;
+                  const top = y(acc + v);
+                  const h = y(acc) - top;
+                  acc += v;
+                  return (
+                    <g key={sr.id}>
+                      <rect x={x} y={top} width={barW} height={h} fill={sr.color} stroke="#fff" strokeWidth="1" />
+                      {sr.hatched && <rect x={x} y={top} width={barW} height={h} fill="url(#ctRetiredHatch)" />}
+                      <title>{`${formatMonth(c.month)} · ${sr.name}${sr.hatched ? " (retired)" : ""}: ${v}%`}</title>
+                    </g>
+                  );
+                })}
+              {c.values && total > 0 && (
+                <text x={cx} y={y(total) - 6} textAnchor="middle" fontSize="11" fontWeight="600" fill="#1B2320">{fmt(total)}</text>
+              )}
+              <text x={cx} y={H - 8} textAnchor="middle" fontSize="11" fill="#58635C">{formatMonth(c.month)}</text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -1296,6 +1976,7 @@ function SelfServeForm({
   isRequestPending,
 }) {
   const user = data.members.find((m) => m.id === selfServeUserId);
+  const activeProjects = data.projects.filter((p) => !p.archived);
 
   function handleDateChange(dateStr) {
     setLastUpdated(user.id, dateStr);
@@ -1347,11 +2028,11 @@ function SelfServeForm({
               </p>
             )}
 
-            {data.projects.length === 0 ? (
+            {activeProjects.length === 0 ? (
               <p className="ct-hint">No projects have been added yet.</p>
             ) : (
               <div className="ct-alloc-cards">
-                {sortProjectsForResource(data.projects, data.allocations[user.id]).map((p) => {
+                {sortProjectsForResource(activeProjects, data.allocations[user.id]).map((p) => {
                   const val = (data.allocations[user.id] || {})[p.id] || 0;
                   return (
                     <AllocCard
@@ -1422,7 +2103,73 @@ function Style() {
       .ct-header {
         background: #334249;
         width: 100%;
-        padding: 18px 18px 14px;
+        padding: 18px 18px 0;
+      }
+      .ct-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px 20px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+        border-top: 1px solid rgba(255,255,255,0.09);
+      }
+      .ct-tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin-left: -12px; }
+      .ct-tabs::-webkit-scrollbar { display: none; }
+      .ct-tab {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 13px 12px 14px;
+        background: none;
+        border: none;
+        color: rgba(255,255,255,0.62);
+        font: inherit;
+        font-size: 13.5px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: color 0.15s;
+      }
+      .ct-tab::after {
+        content: "";
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 0;
+        height: 3px;
+        border-radius: 3px 3px 0 0;
+        background: #9AC6E2;
+        transform: scaleX(0);
+        transition: transform 0.2s ease;
+      }
+      .ct-tab:hover { color: rgba(255,255,255,0.92); }
+      .ct-tab-active { color: #fff; }
+      .ct-tab-active::after { transform: scaleX(1); }
+      .ct-tab:focus-visible { outline: 2px solid #9AC6E2; outline-offset: -4px; border-radius: 6px; }
+      .ct-nav-utils { display: flex; align-items: center; gap: 18px; padding: 8px 0; }
+      .ct-util {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: none;
+        border: none;
+        padding: 2px 0;
+        font: inherit;
+        font-size: 12.5px;
+        color: rgba(255,255,255,0.55);
+        cursor: pointer;
+        transition: color 0.15s;
+      }
+      .ct-util:hover, .ct-util-on { color: #fff; }
+      .ct-util-warn { color: #F2C46D; }
+      .ct-util-warn:hover { color: #FFDC94; }
+      .ct-util:focus-visible { outline: 2px solid #9AC6E2; outline-offset: 3px; border-radius: 2px; }
+      .ct-header .ct-restore-notice { margin: 6px 0 14px; }
+      .ct-header .ct-backups-panel { margin: 6px 0 16px; }
+      @media (prefers-reduced-motion: reduce) {
+        .ct-tab::after, .ct-tab, .ct-util { transition: none; }
       }
       .ct-header-inner {
         max-width: 1600px;
@@ -1471,11 +2218,14 @@ function Style() {
       .ct-brand h1 { font-family: "Space Grotesk", sans-serif; font-size: 19px; line-height: 1.25; margin: 0; letter-spacing: -0.01em; max-width: 420px; }
       .ct-brand p { margin: 2px 0 0; font-size: 13px; color: var(--ink-soft); }
       .ct-topbar-actions { display: flex; align-items: center; gap: 12px; }
-      .ct-mode-toggle { background: var(--c-teal); color: #fff; border-color: var(--c-teal); font-weight: 500; }
+      .ct-topbar-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+      .ct-header-links { display: flex; align-items: center; gap: 18px; }
+      .ct-link { background: none; border: none; padding: 2px 0; font: inherit; font-size: 13px; font-weight: 500; color: #fff; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color 0.15s; }
+      .ct-link:hover { text-decoration-color: currentColor; }
+      .ct-link:focus-visible { outline: 2px solid #9AC6E2; outline-offset: 3px; border-radius: 2px; }
       .ct-restore-btn { background: #FDF3E3; border-color: var(--c-amber); color: #8A5A12; font-weight: 500; }
       .ct-restore-btn:hover { background: #FBEAC8; }
-      .ct-mode-toggle:hover { background: #185349; border-color: #185349; }
-      .ct-selfserve { max-width: 560px; margin: 22px auto 0; }
+      .ct-selfserve { width: 100%; }
       .ct-projects-manager { width: 100%; }
       .ct-projects-manage-list { display: flex; flex-direction: column; gap: 6px; }
       .ct-selfserve-panel h2 { margin-bottom: 4px; }
@@ -1485,7 +2235,31 @@ function Style() {
       .ct-selfserve-confirm { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--c-teal); font-weight: 500; }
       .ct-save { font-size: 12px; color: var(--ink-soft); font-family: "IBM Plex Mono", monospace; }
       .ct-save-error { color: var(--c-danger); }
-      .ct-addrow { display: flex; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
+      .ct-retired-tag { font-size: 10.5px; font-weight: 500; color: var(--ink-soft); background: #EEF0EA; border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; white-space: nowrap; }
+      .ct-retired-row { color: var(--ink-soft); }
+      .ct-trend-chart { margin: 4px 0 8px; }
+      .ct-segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+      .ct-seg { background: var(--surface); border: none; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+      .ct-seg + .ct-seg { border-left: 1px solid var(--line); }
+      .ct-seg-on { background: var(--c-teal); color: #fff; }
+      .ct-seg:focus-visible { outline: 2px solid var(--c-teal); outline-offset: -2px; }
+      .ct-trend-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; margin: 0 0 14px; }
+      .ct-trend-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+      .ct-trend-legend-retired { color: var(--ink-soft); }
+      .ct-trend-table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+      .ct-trend-table th { font-weight: 500; color: var(--ink-soft); text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      .ct-trend-table th.ct-trend-th-name { text-align: left; }
+      .ct-trend-table td { padding: 6px 8px; border-bottom: 1px solid #EEF0EA; }
+      .ct-trend-td-name { display: flex; align-items: center; gap: 6px; min-width: 200px; max-width: 320px; white-space: nowrap; }
+      .ct-trend-cell { text-align: right; font-family: "IBM Plex Mono", monospace; white-space: nowrap; }
+      .ct-trend-carried { color: #A5ACA3 !important; }
+      .ct-trend-none { color: #C5CBC2; }
+      .ct-trend-changed { font-weight: 700; }
+      .ct-trend-total { font-weight: 600; border-top: 1px solid var(--line); }
+      .ct-trend-delta { font-weight: 600; }
+      .ct-trend-row-retired .ct-td-name-text { color: var(--ink-soft); }
+      .ct-trend-name-btn { background: none; border: none; padding: 0; font: inherit; color: var(--c-teal); cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+      .ct-trend-name-btn:hover { text-decoration-color: currentColor; }
       .ct-btn { display: inline-flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; font-size: 13px; color: var(--ink); cursor: pointer; font-family: inherit; }
       .ct-btn:hover { border-color: var(--c-teal); }
       .ct-btn-icon { padding: 7px 9px; }
