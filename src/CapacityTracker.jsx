@@ -107,46 +107,173 @@ function pruneZeros(alloc) {
   return out;
 }
 
+// ---------- Update log ----------
+// data.updates = [{ memberId, at: ISO timestamp, alloc: { [projectId]: pct }, source }]
+// Every allocation change is kept, however often (or rarely) each analyst
+// updates. Edits by the same person within UPDATE_COALESCE_MS are one sitting,
+// so they're merged into a single entry. source is "board", "form" (personal
+// update link) or "import" (entries rebuilt from the older monthly snapshots).
+//
+// data.history (monthly last-value snapshots) is still written alongside for
+// compatibility, but Trends now reads from the update log.
+
+const UPDATE_COALESCE_MS = 30 * 60 * 1000;
+
 // Boards saved before history existed get a baseline: each analyst's current
-// allocation is recorded in the month they last updated it.
+// allocation is recorded in the month they last updated it. Boards saved
+// before the update log existed get one log entry per monthly snapshot.
 function ensureHistory(d) {
-  if (d && d.history && typeof d.history === "object") return d;
-  const history = {};
-  ((d && d.members) || []).forEach((m) => {
-    const mk = monthKeyFromISO(m.lastUpdated);
-    history[mk] = history[mk] || {};
-    history[mk][m.id] = pruneZeros((d.allocations || {})[m.id]);
-  });
-  return { ...d, history };
+  let out = d;
+  if (!(out && out.history && typeof out.history === "object")) {
+    const history = {};
+    ((out && out.members) || []).forEach((m) => {
+      const mk = monthKeyFromISO(m.lastUpdated);
+      history[mk] = history[mk] || {};
+      history[mk][m.id] = pruneZeros((out.allocations || {})[m.id]);
+    });
+    out = { ...out, history };
+  }
+  if (!Array.isArray(out.updates)) {
+    out = { ...out, updates: updatesFromHistory(out) };
+  }
+  return out;
 }
 
-// Returns one entry per month: { month, alloc, recorded }. alloc is null when
-// the analyst has no data yet; recorded is false when the values were carried
-// forward from an earlier month.
-function memberTimeline(data, memberId, months) {
-  const history = data.history || {};
-  const projById = {};
-  data.projects.forEach((p) => (projById[p.id] = p));
-  let last = null;
-  Object.keys(history)
+function updatesFromHistory(d) {
+  const lastUpdated = {};
+  ((d && d.members) || []).forEach((m) => (lastUpdated[m.id] = m.lastUpdated || ""));
+  const updates = [];
+  Object.keys(d.history || {})
     .sort()
     .forEach((mk) => {
-      if (mk < months[0] && history[mk] && memberId in history[mk]) last = history[mk][memberId];
+      Object.entries(d.history[mk] || {}).forEach(([memberId, alloc]) => {
+        const lu = lastUpdated[memberId];
+        const day = lu && lu.slice(0, 7) === mk ? lu : `${mk}-01`;
+        updates.push({ memberId, at: `${day}T12:00:00.000Z`, alloc: pruneZeros(alloc), source: "import" });
+      });
     });
-  return months.map((mk) => {
-    const rec = history[mk] && history[mk][memberId];
-    if (rec) {
-      last = rec;
-      return { month: mk, alloc: rec, recorded: true };
+  return updates;
+}
+
+function recordUpdate(updates, memberId, alloc, source, nowMs = Date.now()) {
+  const list = [...(updates || [])];
+  const entry = { memberId, at: new Date(nowMs).toISOString(), alloc: pruneZeros(alloc), source };
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].memberId !== memberId) continue;
+    const prevMs = Date.parse(list[i].at);
+    if (list[i].source !== "import" && !Number.isNaN(prevMs) && nowMs - prevMs >= 0 && nowMs - prevMs < UPDATE_COALESCE_MS) {
+      list[i] = entry;
+      return list;
     }
-    if (!last) return { month: mk, alloc: null, recorded: false };
-    const carried = {};
-    Object.entries(last).forEach(([pid, v]) => {
-      const p = projById[pid];
-      if (p && p.archived && p.archivedAt && monthKeyFromISO(p.archivedAt) < mk) return;
-      carried[pid] = v;
+    break;
+  }
+  list.push(entry);
+  return list;
+}
+
+function memberUpdates(data, memberId) {
+  return (data.updates || [])
+    .filter((u) => u.memberId === memberId)
+    .map((u) => ({ ...u, t: Date.parse(u.at) }))
+    .filter((u) => !Number.isNaN(u.t))
+    .sort((a, b) => a.t - b.t);
+}
+
+function localDayStartMs(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+
+function monthBoundsMs(mk) {
+  const [y, m] = mk.split("-").map(Number);
+  return [new Date(y, m - 1, 1).getTime(), new Date(y, m, 1).getTime()];
+}
+
+function earliestUpdateMonth(data) {
+  let min = null;
+  (data.updates || []).forEach((u) => {
+    const t = Date.parse(u.at);
+    if (Number.isNaN(t)) return;
+    const mk = monthKeyFromDate(new Date(t));
+    if (!min || mk < min) min = mk;
+  });
+  return min;
+}
+
+// Round fractional percentages to whole numbers while keeping their total
+// equal to the rounded true total (largest-remainder method).
+function roundAlloc(raw) {
+  const entries = Object.entries(raw).filter(([, v]) => v > 0);
+  const target = Math.round(entries.reduce((a, [, v]) => a + v, 0));
+  const floored = entries.map(([pid, v]) => ({ pid, base: Math.floor(v), rem: v - Math.floor(v) }));
+  let short = target - floored.reduce((a, e) => a + e.base, 0);
+  floored.sort((a, b) => b.rem - a.rem);
+  const out = {};
+  floored.forEach((e) => {
+    let v = e.base;
+    if (short > 0 && e.rem > 0) {
+      v += 1;
+      short -= 1;
+    }
+    if (v) out[e.pid] = v;
+  });
+  return out;
+}
+
+// Returns one entry per month: { month, alloc, recorded, updateCount }.
+// alloc is the month's time-weighted average: each update counts for as long
+// as it was in effect during that month. alloc is null before the analyst's
+// first update. recorded is false when no update was made that month and the
+// values were carried forward. A retired project stops counting from the day
+// it was retired.
+function memberTimeline(data, memberId, months) {
+  const events = memberUpdates(data, memberId);
+  const retirements = data.projects
+    .filter((p) => p.archived && p.archivedAt)
+    .map((p) => ({ pid: p.id, t: localDayStartMs(p.archivedAt) }));
+  const now = Date.now();
+
+  function inEffect(t) {
+    let ev = null;
+    for (const e of events) {
+      if (e.t <= t) ev = e;
+      else break;
+    }
+    if (!ev) return null;
+    const alloc = {};
+    Object.entries(ev.alloc || {}).forEach(([pid, v]) => {
+      if (retirements.some((r) => r.pid === pid && r.t <= t)) return;
+      alloc[pid] = v;
     });
-    return { month: mk, alloc: carried, recorded: false };
+    return alloc;
+  }
+
+  return months.map((mk) => {
+    const [ms, me] = monthBoundsMs(mk);
+    const updateCount = events.filter((e) => e.t >= ms && e.t < me).length;
+    const recorded = updateCount > 0;
+    const end = Math.min(me, now);
+    if (!events.length || events[0].t >= end) return { month: mk, alloc: null, recorded: false, updateCount };
+    const start = Math.max(ms, events[0].t);
+
+    const cuts = new Set([start, end]);
+    events.forEach((e) => e.t > start && e.t < end && cuts.add(e.t));
+    retirements.forEach((r) => r.t > start && r.t < end && cuts.add(r.t));
+    const points = [...cuts].sort((a, b) => a - b);
+
+    const sums = {};
+    let covered = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const dur = points[i + 1] - points[i];
+      if (dur <= 0) continue;
+      const alloc = inEffect(points[i]) || {};
+      Object.entries(alloc).forEach(([pid, v]) => (sums[pid] = (sums[pid] || 0) + v * dur));
+      covered += dur;
+    }
+    if (covered === 0) return { month: mk, alloc: inEffect(start) || {}, recorded, updateCount };
+    const avg = {};
+    Object.entries(sums).forEach(([pid, v]) => (avg[pid] = v / covered));
+    return { month: mk, alloc: roundAlloc(avg), recorded, updateCount };
   });
 }
 
@@ -709,9 +836,11 @@ export default function CapacityTracker() {
     const memberAlloc = { ...(data.allocations[memberId] || {}), [projectId]: v };
     const members = data.members.map((m) => (m.id === memberId ? { ...m, lastUpdated: todayISO() } : m));
     const mk = currentMonthKey();
-    const history = { ...(ensureHistory(data).history) };
+    const base = ensureHistory(data);
+    const history = { ...base.history };
     history[mk] = { ...(history[mk] || {}), [memberId]: pruneZeros(memberAlloc) };
-    persist({ ...data, allocations: { ...data.allocations, [memberId]: memberAlloc }, members, history });
+    const updates = recordUpdate(base.updates, memberId, memberAlloc, "board");
+    persist({ ...base, allocations: { ...data.allocations, [memberId]: memberAlloc }, members, history, updates });
   }
 
   function totalFor(memberId) {
@@ -1614,10 +1743,8 @@ function TrendsView({ data, statusColor }) {
   const [projectId, setProjectId] = useState("");
   const [range, setRange] = useState("12");
 
-  const history = data.history || {};
-  const historyMonths = Object.keys(history).sort();
   const nowKey = currentMonthKey();
-  const earliest = historyMonths.length ? historyMonths[0] : nowKey;
+  const earliest = earliestUpdateMonth(data) || nowKey;
   const rangeStart = range === "all" ? earliest : addMonths(nowKey, -(Number(range) - 1));
   const start = rangeStart > earliest ? rangeStart : earliest;
   const months = monthRange(start <= nowKey ? start : nowKey, nowKey);
@@ -1690,8 +1817,8 @@ function TrendsView({ data, statusColor }) {
           </div>
         </div>
         <p className="ct-hint" style={{ marginBottom: 12 }}>
-          A snapshot is kept each month from whatever each analyst last submitted. Grey values were carried forward from an earlier month because no update was made that month.
-          {historyMonths.length <= 1 && " History starts building from here, so trends will fill in as monthly updates come in."}
+          Every update is kept. Each month shows the average split across that month, weighted by how many days each update was in effect, so analysts who update several times a month and those who update every other month are both counted fairly. Grey values were carried forward because no update was made that month.
+          {earliest === nowKey && " History starts building from here, so trends will fill in as updates come in."}
         </p>
 
         {view === "analyst" ? (
@@ -1985,8 +2112,11 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           <thead>
             <tr>
               <th className="ct-trend-th-name">Project</th>
-              {months.map((mk) => (
-                <th key={mk}>{formatMonth(mk)}</th>
+              {timeline.map((t) => (
+                <th key={t.month} title={t.updateCount ? `${t.updateCount} update${t.updateCount === 1 ? "" : "s"} this month` : "No update this month"}>
+                  {formatMonth(t.month)}
+                  {t.updateCount > 1 && <span className="ct-th-sub">{t.updateCount} updates</span>}
+                </th>
               ))}
               <th title="Change from the first month with data to the latest month">Change</th>
             </tr>
@@ -2039,7 +2169,7 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           </tfoot>
         </table>
       </div>
-      <p className="ct-caption">Bold values changed from the month before. Change compares the first month with data to the latest month, in percentage points.</p>
+      <p className="ct-caption">Bold values changed from the month before. Months with more than one update show a blend weighted by days. Change compares the first month with data to the latest month, in percentage points.</p>
 
       <div className="ct-trend-chart-section">
       <TrendChart
@@ -2061,7 +2191,79 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
         })}
       </div>
       </div>
+
+      <UpdateLog data={data} member={member} months={months} projById={projById} statusColor={statusColor} />
     </>
+  );
+}
+
+const UPDATE_SOURCE_LABELS = {
+  board: "On the board",
+  form: "Personal update link",
+  import: "From earlier monthly snapshot",
+};
+
+// Every dated update this analyst made in the selected range, newest first.
+function UpdateLog({ data, member, months, projById, statusColor }) {
+  const [rangeStart] = monthBoundsMs(months[0]);
+  const entries = memberUpdates(data, member.id)
+    .filter((u) => u.t >= rangeStart)
+    .reverse();
+
+  return (
+    <div className="ct-update-log">
+      <h3>Update log</h3>
+      {entries.length === 0 ? (
+        <p className="ct-hint">No updates from {member.name} in this range.</p>
+      ) : (
+        <div className="ct-table-wrap">
+          <table className="ct-trend-table ct-update-log-table">
+            <thead>
+              <tr>
+                <th className="ct-trend-th-name">Date</th>
+                <th>Total</th>
+                <th className="ct-update-log-split">Split</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((u) => {
+                const total = sumAlloc(u.alloc);
+                const when = new Date(u.t);
+                const isImport = u.source === "import";
+                const parts = Object.entries(u.alloc || {})
+                  .filter(([pid, v]) => v && projById[pid])
+                  .sort((a, b) => b[1] - a[1]);
+                return (
+                  <tr key={`${u.at}-${u.source}`}>
+                    <td className="ct-trend-td-name">
+                      <span className="ct-update-log-date">
+                        {isImport
+                          ? when.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+                          : when.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                      </span>
+                      <span className="ct-update-log-source">{UPDATE_SOURCE_LABELS[u.source] || u.source}</span>
+                    </td>
+                    <td className="ct-trend-cell" style={{ color: statusColor(total) }}>{total}%</td>
+                    <td className="ct-update-log-split">
+                      {parts.length === 0 ? (
+                        <span className="ct-td-empty">No time on any project</span>
+                      ) : (
+                        parts.map(([pid, v]) => (
+                          <span key={pid} className="ct-update-log-chip" title={projById[pid].name}>
+                            <span className="ct-dot" style={{ background: projById[pid].color }} />
+                            {projById[pid].name} {v}%
+                          </span>
+                        ))
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2389,6 +2591,14 @@ function Style() {
       .ct-restore-notice-close { margin-left: auto; background: none; border: none; color: var(--c-teal); cursor: pointer; padding: 2px; }
       .ct-backups-panel { margin-top: 12px; }
       .ct-backups-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+      .ct-th-sub { display: block; font-size: 10.5px; font-weight: 400; color: var(--ink-soft); margin-top: 2px; }
+      .ct-update-log { margin-top: 22px; }
+      .ct-update-log h3 { font-family: "Space Grotesk", sans-serif; font-size: 14px; margin: 0 0 8px; }
+      .ct-update-log-date { display: block; white-space: nowrap; }
+      .ct-update-log-source { display: block; font-size: 11.5px; color: var(--ink-soft); }
+      .ct-update-log-table td, .ct-update-log-table th { vertical-align: top; }
+      .ct-trend-table .ct-update-log-split { text-align: left; white-space: normal; min-width: 280px; }
+      .ct-update-log-chip { display: inline-flex; align-items: center; gap: 5px; margin: 2px 10px 2px 0; font-size: 12.5px; white-space: nowrap; }
       .ct-links-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
       .ct-links-none { color: var(--ink-soft); }
       .ct-links-notice { display: flex; align-items: center; gap: 6px; color: var(--c-teal); margin-bottom: 8px; }
