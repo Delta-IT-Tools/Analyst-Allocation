@@ -1816,10 +1816,16 @@ function TrendsView({ data, statusColor }) {
             </div>
           </div>
         </div>
+        {view === "analyst" && member ? (
+        <p className="ct-hint" style={{ marginBottom: 12 }}>
+          Showing each update {member.name} actually submitted, on the date they submitted it.
+        </p>
+        ) : (
         <p className="ct-hint" style={{ marginBottom: 12 }}>
           Every update is kept. Each month shows the average split across that month, weighted by how many days each update was in effect, so analysts who update several times a month and those who update every other month are both counted fairly. Grey values were carried forward because no update was made that month.
           {earliest === nowKey && " History starts building from here, so trends will fill in as updates come in."}
         </p>
+        )}
 
         {view === "analyst" ? (
           member ? (
@@ -2099,32 +2105,61 @@ function TeamTrend({ data, months, statusColor, onPick }) {
   );
 }
 
-function MemberTrend({ data, member, months, projById, statusColor }) {
-  const timeline = memberTimeline(data, member.id, months);
-
-  // Every project this analyst had time on during the range, live or retired
-  const lastValue = {};
-  const everSum = {};
-  timeline.forEach((t) => {
-    Object.entries(t.alloc || {}).forEach(([pid, v]) => {
-      everSum[pid] = (everSum[pid] || 0) + v;
-    });
+function updateDateLabel(u) {
+  return new Date(u.t).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+    timeZone: u.source === "import" ? "UTC" : undefined,
   });
-  const latest = timeline[timeline.length - 1];
-  Object.keys(everSum).forEach((pid) => (lastValue[pid] = (latest.alloc || {})[pid] || 0));
-  const projectIds = Object.keys(everSum)
-    .filter((pid) => projById[pid])
-    .sort((a, b) => lastValue[b] - lastValue[a] || everSum[b] - everSum[a] || projById[a].name.localeCompare(projById[b].name));
+}
 
-  if (projectIds.length === 0) {
-    return <p className="ct-hint">No allocation history for {member.name} in this range yet.</p>;
+function updateTimeLabel(u) {
+  return new Date(u.t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+// One column per update the analyst actually submitted, oldest to newest.
+// Nothing is averaged or carried forward between updates.
+function MemberTrend({ data, member, months, projById, statusColor }) {
+  const [rangeStart] = monthBoundsMs(months[0]);
+  const events = memberUpdates(data, member.id).filter((u) => u.t >= rangeStart);
+
+  if (events.length === 0) {
+    return <p className="ct-hint">No updates from {member.name} in this range yet.</p>;
   }
 
-  const firstWithData = timeline.find((t) => t.alloc);
-  const memberEvents = memberUpdates(data, member.id);
-  const lastUpdateMonth = memberEvents.length
-    ? monthKeyFromDate(new Date(memberEvents[memberEvents.length - 1].t))
-    : null;
+  const labelCounts = {};
+  events.forEach((u) => {
+    const l = updateDateLabel(u);
+    labelCounts[l] = (labelCounts[l] || 0) + 1;
+  });
+  const cols = events.map((u) => {
+    const label = updateDateLabel(u);
+    return {
+      key: `${u.at}-${u.source}`,
+      label,
+      time: labelCounts[label] > 1 && u.source !== "import" ? updateTimeLabel(u) : "",
+      tooltip:
+        u.source === "import"
+          ? `${label}, from an earlier monthly snapshot`
+          : `${label} at ${updateTimeLabel(u)}, ${UPDATE_SOURCE_LABELS[u.source] ? UPDATE_SOURCE_LABELS[u.source].toLowerCase() : u.source}`,
+      alloc: u.alloc || {},
+    };
+  });
+  const lastIdx = cols.length - 1;
+  const latest = cols[lastIdx];
+  const first = cols[0];
+
+  const everSum = {};
+  cols.forEach((c) => Object.entries(c.alloc).forEach(([pid, v]) => (everSum[pid] = (everSum[pid] || 0) + (v || 0))));
+  const projectIds = Object.keys(everSum)
+    .filter((pid) => projById[pid] && everSum[pid] > 0)
+    .sort(
+      (a, b) =>
+        (latest.alloc[b] || 0) - (latest.alloc[a] || 0) ||
+        everSum[b] - everSum[a] ||
+        projById[a].name.localeCompare(projById[b].name)
+    );
 
   return (
     <>
@@ -2133,35 +2168,21 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           <thead>
             <tr>
               <th className="ct-trend-th-name">Project</th>
-              {timeline.map((t, i) => {
-                const isLatest = i === timeline.length - 1;
-                return (
-                  <th
-                    key={t.month}
-                    className={isLatest ? "ct-trend-th-latest" : undefined}
-                    title={t.updateCount ? `${t.updateCount} update${t.updateCount === 1 ? "" : "s"} this month` : "No update this month"}
-                  >
-                    {formatMonth(t.month)}
-                    {isLatest ? (
-                      t.recorded || !lastUpdateMonth ? (
-                        <span className="ct-th-sub">{t.updateCount > 1 ? `Current, ${t.updateCount} updates` : "Current"}</span>
-                      ) : (
-                        <span className="ct-th-sub ct-th-stale">Last update {formatMonth(lastUpdateMonth)}</span>
-                      )
-                    ) : (
-                      t.updateCount > 1 && <span className="ct-th-sub">{t.updateCount} updates</span>
-                    )}
-                  </th>
-                );
-              })}
-              <th title="Change from the first month with data to the latest month">Change</th>
+              {cols.map((c, i) => (
+                <th key={c.key} className={i === lastIdx ? "ct-trend-th-latest" : undefined} title={c.tooltip}>
+                  {c.label}
+                  {(c.time || i === lastIdx) && (
+                    <span className="ct-th-sub">{[c.time, i === lastIdx ? "Latest" : ""].filter(Boolean).join(", ")}</span>
+                  )}
+                </th>
+              ))}
+              <th title="Change from the first update shown to the latest update, in percentage points">Change</th>
             </tr>
           </thead>
           <tbody>
             {projectIds.map((pid) => {
               const p = projById[pid];
-              const first = firstWithData ? (firstWithData.alloc[pid] || 0) : 0;
-              const delta = lastValue[pid] - first;
+              const delta = (latest.alloc[pid] || 0) - (first.alloc[pid] || 0);
               return (
                 <tr key={pid} className={p.archived ? "ct-trend-row-retired" : undefined}>
                   <td className="ct-trend-td-name" title={p.name}>
@@ -2169,18 +2190,12 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
                     <span className="ct-td-name-text">{p.name}</span>
                     {p.archived && <span className="ct-retired-tag">Retired</span>}
                   </td>
-                  {timeline.map((t, i) => {
-                    if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
-                    const v = t.alloc[pid] || 0;
-                    const prev = i > 0 && timeline[i - 1].alloc ? timeline[i - 1].alloc[pid] || 0 : null;
-                    const changed = t.recorded && prev !== null && prev !== v;
-                    const isLatest = i === timeline.length - 1;
-                    const cls = [
-                      "ct-trend-cell",
-                      isLatest ? "ct-trend-latest" : !t.recorded && "ct-trend-carried",
-                    ].filter(Boolean).join(" ");
+                  {cols.map((c, i) => {
+                    const v = c.alloc[pid] || 0;
+                    const prev = i > 0 ? cols[i - 1].alloc[pid] || 0 : null;
+                    const changed = prev !== null && prev !== v;
                     return (
-                      <td key={t.month} className={cls} title={changed ? `Changed from ${prev}%` : undefined}>
+                      <td key={c.key} className={i === lastIdx ? "ct-trend-cell ct-trend-latest" : "ct-trend-cell"} title={changed ? `Changed from ${prev}%` : undefined}>
                         {v ? `${v}%` : <span className="ct-td-empty">–</span>}
                         {changed && (
                           <span className={v > prev ? "ct-trend-arrow ct-trend-up" : "ct-trend-arrow ct-trend-down"} aria-label={`changed from ${prev}%`}>
@@ -2200,17 +2215,14 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           <tfoot>
             <tr>
               <td className="ct-trend-td-name ct-foot-label">Total</td>
-              {timeline.map((t, i) => {
-                if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
-                const total = sumAlloc(t.alloc);
-                const isLatest = i === timeline.length - 1;
-                const cls = [
-                  "ct-trend-cell ct-trend-total",
-                  isLatest ? "ct-trend-latest" : "ct-trend-past",
-                  !isLatest && !t.recorded && "ct-trend-carried",
-                ].filter(Boolean).join(" ");
+              {cols.map((c, i) => {
+                const total = sumAlloc(c.alloc);
                 return (
-                  <td key={t.month} className={cls} style={isLatest ? { color: statusColor(total) } : undefined}>
+                  <td
+                    key={c.key}
+                    className={i === lastIdx ? "ct-trend-cell ct-trend-total ct-trend-latest" : "ct-trend-cell ct-trend-total ct-trend-past"}
+                    style={i === lastIdx ? { color: statusColor(total) } : undefined}
+                  >
                     {total}%
                   </td>
                 );
@@ -2220,11 +2232,13 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           </tfoot>
         </table>
       </div>
-      <p className="ct-caption">The latest month is in bold. Arrows mark values that went up or down from the month before. Months with more than one update show a blend weighted by days. Change compares the first month with data to the latest month, in percentage points.</p>
+      <p className="ct-caption">
+        Each column is an update {member.name} actually submitted. The latest update is in bold. Arrows mark values that went up or down from the update before. Change compares the first update shown to the latest, in percentage points.
+      </p>
 
       <div className="ct-trend-chart-section">
       <TrendChart
-        columns={timeline.map((t) => ({ month: t.month, values: t.alloc, recorded: t.recorded }))}
+        columns={cols.map((c) => ({ month: c.key, label: c.label, values: c.alloc, recorded: true }))}
         series={projectIds.map((pid) => ({ id: pid, name: projById[pid].name, color: projById[pid].color, hatched: !!projById[pid].archived }))}
         unit="pct"
       />
@@ -2340,6 +2354,9 @@ function TrendChart({ columns, series, unit }) {
   const fmt = (v) => (isFte ? formatFTE(v) : `${v}%`);
   const ticks = [];
   for (let v = 0; v <= yMax; v += step) ticks.push(v);
+  // With many columns, label every nth one (always the latest) so text doesn't overlap.
+  const labelEvery = Math.ceil(columns.length / 12);
+  const showLabel = (i) => i === columns.length - 1 || (i % labelEvery === 0 && columns.length - 1 - i >= labelEvery);
 
   return (
     <div className="ct-trend-chart">
@@ -2376,14 +2393,14 @@ function TrendChart({ columns, series, unit }) {
                     <g key={sr.id}>
                       <rect x={x} y={top} width={barW} height={h} fill={sr.color} stroke="#fff" strokeWidth="1" />
                       {sr.hatched && <rect x={x} y={top} width={barW} height={h} fill="url(#ctRetiredHatch)" />}
-                      <title>{`${formatMonth(c.month)} · ${sr.name}${sr.hatched ? " (retired)" : ""}: ${v}%`}</title>
+                      <title>{`${c.label || formatMonth(c.month)} · ${sr.name}${sr.hatched ? " (retired)" : ""}: ${v}%`}</title>
                     </g>
                   );
                 })}
               {c.values && total > 0 && (
                 <text x={cx} y={y(total) - 6} textAnchor="middle" fontSize="11" fontWeight={i === columns.length - 1 ? "700" : "400"} fill={i === columns.length - 1 ? "#1B2320" : "#58635C"}>{fmt(total)}</text>
               )}
-              <text x={cx} y={H - 8} textAnchor="middle" fontSize="11" fontWeight={i === columns.length - 1 ? "700" : "400"} fill={i === columns.length - 1 ? "#1B2320" : "#58635C"}>{formatMonth(c.month)}</text>
+              <text x={cx} y={H - 8} textAnchor="middle" fontSize="11" fontWeight={i === columns.length - 1 ? "700" : "400"} fill={i === columns.length - 1 ? "#1B2320" : "#58635C"}>{showLabel(i) ? c.label || formatMonth(c.month) : ""}</text>
             </g>
           );
         })}
@@ -2648,7 +2665,6 @@ function Style() {
       .ct-trend-arrow { font-size: 8px; margin-left: 3px; vertical-align: 1px; }
       .ct-trend-up { color: var(--c-teal); }
       .ct-trend-down { color: var(--c-danger); }
-      .ct-th-stale { color: var(--c-amber) !important; font-weight: 500 !important; }
       .ct-th-sub { display: block; font-size: 10.5px; font-weight: 400; color: var(--ink-soft); margin-top: 2px; }
       .ct-update-log { margin-top: 22px; }
       .ct-update-log h3 { font-family: "Space Grotesk", sans-serif; font-size: 14px; margin: 0 0 8px; }
