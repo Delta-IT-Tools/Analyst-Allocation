@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Pencil, X, Check, AlertTriangle, Search, Eye, Wrench, Users } from "lucide-react";
+import { Pencil, X, Check, AlertTriangle, Search, Eye, Wrench } from "lucide-react";
 
 // Interfaces section of the IT Analyst Resource Tracker.
 //
@@ -64,9 +64,10 @@ const SEED_INTERFACES =
 const GROUP_OPTIONS = [
   { value: "none", label: "No grouping" },
   { value: "destination", label: "Destination" },
-  { value: "brand", label: "Brand" },
   { value: "check", label: "Check system" },
 ];
+
+const ALL_BRANDS_LABEL = "Internal / All Brands";
 
 function norm(name) {
   return String(name || "").trim().toLowerCase();
@@ -86,9 +87,27 @@ function needsFixer(r) {
   return (r.resolvers || []).length > 0 && assigned(r.resolvers).length === 0;
 }
 
-function hasPerson(list, name) {
+function findPerson(list, name) {
   const n = norm(name);
-  return (list || []).some((p) => norm(p.name) === n);
+  return (list || []).find((p) => norm(p.name) === n);
+}
+
+function brandLabel(r) {
+  return (r.brands || []).join(", ") || "—";
+}
+
+// Brand first (with "Internal / All Brands" last), then interface, then destination.
+function compareRecords(a, b) {
+  const ab = brandLabel(a);
+  const bb = brandLabel(b);
+  const aInternal = ab === ALL_BRANDS_LABEL ? 1 : 0;
+  const bInternal = bb === ALL_BRANDS_LABEL ? 1 : 0;
+  return (
+    aInternal - bInternal ||
+    ab.localeCompare(bb) ||
+    a.interface.localeCompare(b.interface) ||
+    a.destination.localeCompare(b.destination)
+  );
 }
 
 function matchesQuery(r, q) {
@@ -109,11 +128,22 @@ function matchesQuery(r, q) {
   return hay.includes(q);
 }
 
-function groupKeys(r, groupBy) {
-  if (groupBy === "destination") return [r.destination || "—"];
-  if (groupBy === "check") return [r.check || "Not specified"];
-  if (groupBy === "brand") return (r.brands && r.brands.length ? r.brands : ["No brand"]);
-  return ["all"];
+function groupKey(r, groupBy) {
+  if (groupBy === "destination") return r.destination || "—";
+  if (groupBy === "check") return r.check || "Not specified";
+  return "all";
+}
+
+// Every interface a person is on, as one row with their role(s).
+function rowsForPerson(records, name) {
+  return records
+    .map((r) => {
+      const watch = findPerson(r.monitors, name);
+      const fix = findPerson(r.resolvers, name);
+      if (!watch && !fix) return null;
+      return { record: r, watch: !!watch, fix: !!fix, note: (watch && watch.note) || (fix && fix.note) || "" };
+    })
+    .filter(Boolean);
 }
 
 export default function InterfacesView({ members }) {
@@ -121,7 +151,8 @@ export default function InterfacesView({ members }) {
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState("analyst"); // analyst | all
+  const [view, setView] = useState("interfaces"); // interfaces | analyst
+  const [brand, setBrand] = useState("");
   const [analyst, setAnalyst] = useState("");
   const [query, setQuery] = useState("");
   const [groupBy, setGroupBy] = useState("none");
@@ -203,32 +234,43 @@ export default function InterfacesView({ members }) {
     }
   }
 
+  const brandOptions = useMemo(() => {
+    const set = new Set();
+    records.forEach((r) => (r.brands || []).forEach((b) => set.add(b)));
+    return [...set].sort((a, b) => (a === ALL_BRANDS_LABEL) - (b === ALL_BRANDS_LABEL) || a.localeCompare(b));
+  }, [records]);
+
   const q = query.trim().toLowerCase();
-  const visible = useMemo(() => records.filter((r) => matchesQuery(r, q)), [records, q]);
+  const visible = useMemo(
+    () =>
+      records
+        .filter((r) => !brand || (r.brands || []).includes(brand))
+        .filter((r) => matchesQuery(r, q))
+        .sort(compareRecords),
+    [records, brand, q]
+  );
   const memberNames = useMemo(() => new Set(members.map((m) => norm(m.name))), [members]);
 
-  const gapsMonitor = visible.filter(needsMonitor);
-  const gapsFixer = visible.filter(needsFixer);
+  const gapsMonitor = visible.filter(needsMonitor).length;
+  const gapsFixer = visible.filter(needsFixer).length;
 
-  // Owners who aren't on the team list (support groups, people outside IT).
-  const otherOwners = useMemo(() => {
-    const map = new Map();
-    visible.forEach((r) => {
-      [["monitors", r.monitors], ["fixes", r.resolvers]].forEach(([kind, list]) => {
-        assigned(list).forEach((p) => {
-          const n = norm(p.name);
-          if (memberNames.has(n)) return;
-          if (!map.has(n)) map.set(n, { name: p.name, monitors: [], fixes: [] });
-          const entry = map.get(n);
-          if (!entry[kind].includes(r)) entry[kind].push(r);
-        });
+  // Analysts first (in board order), then any other people or teams assigned.
+  const people = useMemo(() => {
+    const list = members.map((m) => ({ key: m.id, name: m.name, isAnalyst: true }));
+    const seen = new Set(memberNames);
+    records.forEach((r) => {
+      [...assigned(r.monitors), ...assigned(r.resolvers)].forEach((p) => {
+        const n = norm(p.name);
+        if (seen.has(n)) return;
+        seen.add(n);
+        list.push({ key: `other:${n}`, name: p.name, isAnalyst: false });
       });
     });
-    return [...map.values()].sort((a, b) => b.monitors.length - a.monitors.length || a.name.localeCompare(b.name));
-  }, [visible, memberNames]);
+    return list;
+  }, [members, memberNames, records]);
 
-  const shownMembers = analyst ? members.filter((m) => m.name === analyst) : members;
   const editingRecord = editing ? records.find((r) => r.id === editing.id) : null;
+  const filtersActive = !!(brand || q);
 
   if (status === "loading") {
     return (
@@ -254,39 +296,56 @@ export default function InterfacesView({ members }) {
     );
   }
 
+  // By-analyst view: one block per person, each a plain list of their interfaces.
+  const shownPeople = (analyst ? people.filter((p) => p.key === analyst) : people)
+    .map((p) => ({ ...p, rows: rowsForPerson(visible, p.name) }));
+  const withRows = shownPeople.filter((p) => p.rows.length > 0);
+  const analystsWithout = shownPeople.filter((p) => p.isAnalyst && p.rows.length === 0);
+  const analystBlocks = withRows.filter((p) => p.isAnalyst);
+  const otherBlocks = withRows.filter((p) => !p.isAnalyst);
+
   return (
     <div className="ct-if">
       <InterfacesStyle />
 
       <section className="ct-panel">
         <div className="ct-panel-head-row">
-          <h2>Interface monitoring</h2>
+          <h2>Interfaces</h2>
           <span className={`ct-save ct-save-${saveState}`}>
             {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : ""}
           </span>
         </div>
         <p className="ct-hint" style={{ marginBottom: 12 }}>
-          Which interfaces each analyst watches for failures, and who fixes them when they break. Use the pencil next to any
-          assignment to change it. Analysts come from the team list on this board.
+          Which interfaces each analyst watches for failures, and who fixes them when they break.
         </p>
 
         <div className="ct-if-controls">
           <div className="ct-segmented" role="tablist" aria-label="Interface view">
+            <button type="button" role="tab" aria-selected={view === "interfaces"} className={view === "interfaces" ? "ct-seg ct-seg-on" : "ct-seg"} onClick={() => setView("interfaces")}>
+              Interfaces
+            </button>
             <button type="button" role="tab" aria-selected={view === "analyst"} className={view === "analyst" ? "ct-seg ct-seg-on" : "ct-seg"} onClick={() => setView("analyst")}>
               By analyst
             </button>
-            <button type="button" role="tab" aria-selected={view === "all"} className={view === "all" ? "ct-seg ct-seg-on" : "ct-seg"} onClick={() => setView("all")}>
-              All interfaces
-            </button>
+          </div>
+
+          <div className="ct-identity">
+            <label htmlFor="ct-if-brand">Brand</label>
+            <select id="ct-if-brand" value={brand} onChange={(e) => setBrand(e.target.value)}>
+              <option value="">All brands</option>
+              {brandOptions.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
           </div>
 
           {view === "analyst" ? (
             <div className="ct-identity">
               <label htmlFor="ct-if-analyst">Analyst</label>
               <select id="ct-if-analyst" value={analyst} onChange={(e) => setAnalyst(e.target.value)}>
-                <option value="">All analysts</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.name}>{m.name}</option>
+                <option value="">Everyone</option>
+                {people.map((p) => (
+                  <option key={p.key} value={p.key}>{p.name}</option>
                 ))}
               </select>
             </div>
@@ -305,18 +364,24 @@ export default function InterfacesView({ members }) {
             <Search size={14} />
             <input
               type="search"
-              placeholder="Search interface, system, brand, person…"
+              placeholder="Search interface, system, person…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="Search interfaces"
             />
           </div>
+
+          {filtersActive && (
+            <button type="button" className="ct-btn ct-btn-icon" onClick={() => { setBrand(""); setQuery(""); }}>
+              <X size={13} /> Clear filters
+            </button>
+          )}
         </div>
 
         <div className="ct-if-stats">
-          <span className="ct-if-stat"><b>{visible.length}</b> interfaces{q ? " match" : ""}</span>
-          <span className={gapsMonitor.length ? "ct-if-stat ct-if-stat-warn" : "ct-if-stat"}><b>{gapsMonitor.length}</b> without a watcher</span>
-          <span className={gapsFixer.length ? "ct-if-stat ct-if-stat-warn" : "ct-if-stat"}><b>{gapsFixer.length}</b> without a fixer</span>
+          <span className="ct-if-stat"><b>{visible.length}</b> interfaces{filtersActive ? " shown" : ""}</span>
+          <span className={gapsMonitor ? "ct-if-stat ct-if-stat-warn" : "ct-if-stat"}><b>{gapsMonitor}</b> without a watcher</span>
+          <span className={gapsFixer ? "ct-if-stat ct-if-stat-warn" : "ct-if-stat"}><b>{gapsFixer}</b> without a fixer</span>
         </div>
       </section>
 
@@ -329,100 +394,39 @@ export default function InterfacesView({ members }) {
         </div>
       )}
 
-      {view === "analyst" ? (
-        <>
-          {!analyst && gapsMonitor.length > 0 && (
-            <section className="ct-panel ct-if-gap-panel">
-              <h2><AlertTriangle size={14} /> Nobody is watching these</h2>
-              <p className="ct-hint" style={{ marginBottom: 8 }}>Assign a watcher so failures on these interfaces get noticed.</p>
-              <div className="ct-if-list">
-                {gapsMonitor.map((r) => (
-                  <InterfaceLine key={r.id} record={r} onEdit={() => setEditing({ id: r.id, role: "monitor" })} editLabel="Assign watcher" />
-                ))}
-              </div>
-            </section>
-          )}
-
-          <div className="ct-if-grid">
-            {shownMembers.map((m) => {
-              const watches = visible.filter((r) => hasPerson(r.monitors, m.name));
-              const fixes = visible.filter((r) => hasPerson(r.resolvers, m.name));
-              return (
-                <section key={m.id} className="ct-panel ct-if-card">
-                  <div className="ct-if-card-head">
-                    <h2>{m.name}</h2>
-                    <span className="ct-hint">
-                      Watches {watches.length} · Fixes {fixes.length}
-                    </span>
-                  </div>
-
-                  <h3 className="ct-if-subhead"><Eye size={13} /> Monitors</h3>
-                  {watches.length === 0 ? (
-                    <p className="ct-hint ct-if-none">Not monitoring any interfaces{q ? " that match" : ""}.</p>
-                  ) : (
-                    <div className="ct-if-list">
-                      {watches.map((r) => (
-                        <InterfaceLine
-                          key={r.id}
-                          record={r}
-                          personNote={(r.monitors.find((p) => norm(p.name) === norm(m.name)) || {}).note}
-                          coOwners={assigned(r.monitors).filter((p) => norm(p.name) !== norm(m.name))}
-                          onEdit={() => setEditing({ id: r.id, role: "monitor" })}
-                          editLabel="Edit watchers"
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {fixes.length > 0 && (
-                    <>
-                      <h3 className="ct-if-subhead"><Wrench size={13} /> Also fixes</h3>
-                      <div className="ct-if-list">
-                        {fixes.map((r) => (
-                          <InterfaceLine
-                            key={r.id}
-                            record={r}
-                            compact
-                            onEdit={() => setEditing({ id: r.id, role: "resolve" })}
-                            editLabel="Edit fixers"
-                          />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </section>
-              );
-            })}
-          </div>
-
-          {!analyst && otherOwners.length > 0 && (
-            <section className="ct-panel">
-              <h2><Users size={14} style={{ verticalAlign: "-2px" }} /> Other owners</h2>
-              <p className="ct-hint" style={{ marginBottom: 10 }}>
-                Teams and people outside the analyst list who are assigned to interfaces.
-              </p>
-              <div className="ct-if-others">
-                {otherOwners.map((o) => (
-                  <div key={o.name} className="ct-if-other">
-                    <div className="ct-if-other-name">{o.name}</div>
-                    <div className="ct-hint" style={{ fontSize: 12 }}>
-                      {o.monitors.length > 0 && <>Watches: {o.monitors.map((r) => `${r.interface} → ${r.destination}`).join(", ")}</>}
-                      {o.monitors.length > 0 && o.fixes.length > 0 && <br />}
-                      {o.fixes.length > 0 && <>Fixes: {o.fixes.map((r) => `${r.interface} → ${r.destination}`).join(", ")}</>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-        </>
-      ) : (
+      {view === "interfaces" ? (
         <AllInterfacesTable
           records={visible}
           groupBy={groupBy}
           memberNames={memberNames}
           onEdit={(id, role) => setEditing({ id, role })}
         />
+      ) : (
+        <section className="ct-panel">
+          {withRows.length === 0 ? (
+            <p className="ct-hint" style={{ margin: "6px 0" }}>No assignments match these filters.</p>
+          ) : (
+            <>
+              {analystBlocks.map((p) => (
+                <PersonBlock key={p.key} person={p} />
+              ))}
+              {otherBlocks.length > 0 && (
+                <>
+                  <div className="ct-if-divider">Other teams &amp; people</div>
+                  {otherBlocks.map((p) => (
+                    <PersonBlock key={p.key} person={p} />
+                  ))}
+                </>
+              )}
+            </>
+          )}
+          {analystsWithout.length > 0 && (
+            <p className="ct-hint ct-if-without">
+              No interfaces{filtersActive ? " matching these filters" : ""}: {analystsWithout.map((p) => p.name).join(", ")}
+            </p>
+          )}
+          <p className="ct-caption">To change who watches or fixes an interface, use the pencil buttons in the Interfaces view.</p>
+        </section>
       )}
 
       {editing && editingRecord && (
@@ -441,28 +445,51 @@ export default function InterfacesView({ members }) {
   );
 }
 
-function InterfaceLine({ record: r, personNote, coOwners, onEdit, editLabel, compact }) {
+function PersonBlock({ person }) {
+  const watches = person.rows.filter((r) => r.watch).length;
+  const fixes = person.rows.filter((r) => r.fix).length;
   return (
-    <div className="ct-if-line">
-      <div className="ct-if-line-main">
-        <div className="ct-if-line-title">
-          <strong>{r.interface}</strong>
-          <span className="ct-if-arrow">→</span>
-          <span>{r.destination}</span>
-          {r.msgType && <span className="ct-if-badge" title="Message type">{r.msgType}</span>}
-        </div>
-        {!compact && (
-          <div className="ct-if-line-meta">
-            {r.check && <span>Check in {r.check}</span>}
-            {(r.brands || []).length > 0 && <span>{r.brands.join(", ")}</span>}
-            {personNote && <span className="ct-if-note">{personNote}</span>}
-            {coOwners && coOwners.length > 0 && <span>with {coOwners.map((p) => p.name).join(", ")}</span>}
-          </div>
-        )}
+    <div className="ct-if-person">
+      <div className="ct-if-person-head">
+        <h3>{person.name}</h3>
+        <span className="ct-hint">
+          Watches {watches} · Fixes {fixes}
+        </span>
       </div>
-      <button type="button" className="ct-if-edit" onClick={onEdit} title={editLabel} aria-label={`${editLabel}: ${r.interface} → ${r.destination}`}>
-        <Pencil size={13} />
-      </button>
+      <div className="ct-table-wrap">
+        <table className="ct-if-table ct-if-person-table">
+          <thead>
+            <tr>
+              <th>Brand</th>
+              <th>Interface</th>
+              <th>Destination</th>
+              <th>Check in</th>
+              <th>Msg</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            {person.rows.map(({ record: r, watch, fix, note }) => (
+              <tr key={r.id}>
+                <td className="ct-if-brand-cell">{brandLabel(r)}</td>
+                <td>
+                  <strong>{r.interface}</strong>
+                  {note && <div className="ct-if-note">{note}</div>}
+                </td>
+                <td>{r.destination}</td>
+                <td>{r.check || <span className="ct-hint">—</span>}</td>
+                <td className="ct-if-mono">{r.msgType || ""}</td>
+                <td>
+                  <span className="ct-if-roles">
+                    {watch && <span className="ct-if-role ct-if-role-watch"><Eye size={11} /> Watches</span>}
+                    {fix && <span className="ct-if-role ct-if-role-fix"><Wrench size={11} /> Fixes</span>}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -489,10 +516,9 @@ function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
   const groups = useMemo(() => {
     const map = new Map();
     records.forEach((r) => {
-      groupKeys(r, groupBy).forEach((k) => {
-        if (!map.has(k)) map.set(k, []);
-        map.get(k).push(r);
-      });
+      const k = groupKey(r, groupBy);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
     });
     const entries = [...map.entries()];
     if (groupBy !== "none") entries.sort((a, b) => a[0].localeCompare(b[0]));
@@ -500,7 +526,7 @@ function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
   }, [records, groupBy]);
 
   if (records.length === 0) {
-    return <div className="ct-empty">No interfaces match your search.</div>;
+    return <div className="ct-empty">No interfaces match these filters.</div>;
   }
 
   return (
@@ -509,11 +535,11 @@ function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
         <table className="ct-if-table">
           <thead>
             <tr>
+              <th>Brand</th>
               <th>Interface</th>
               <th>Destination</th>
               <th>Check in</th>
               <th>Msg</th>
-              <th>Brands</th>
               <th>Monitored by</th>
               <th>Fixed by</th>
             </tr>
@@ -545,11 +571,11 @@ function GroupRows({ label, rows, memberNames, onEdit }) {
       )}
       {rows.map((r) => (
         <tr key={`${label || ""}-${r.id}`}>
+          <td className="ct-if-brand-cell">{brandLabel(r)}</td>
           <td><strong>{r.interface}</strong></td>
           <td>{r.destination}</td>
           <td>{r.check || <span className="ct-hint">—</span>}</td>
           <td className="ct-if-mono">{r.msgType || ""}</td>
-          <td>{(r.brands || []).join(", ")}</td>
           <td>
             <div className="ct-if-cell">
               <OwnerChips list={r.monitors} memberNames={memberNames} emptyLabel="Unassigned" />
@@ -698,31 +724,12 @@ function InterfacesStyle() {
       .ct-if-stat-warn { border-color: #E9C98F; background: #FBF3E4; }
       .ct-if-stat-warn b { color: var(--c-amber); }
 
-      .ct-if-gap-panel { border-color: #E9C98F; background: #FFFBF3; }
-      .ct-if-gap-panel h2 { display: flex; align-items: center; gap: 6px; color: var(--c-amber); }
 
-      .ct-if-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 0 14px; align-items: start; }
-      .ct-if-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 8px; }
-      .ct-if-card-head h2 { margin: 0; }
-      .ct-if-subhead { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin: 10px 0 6px; }
-      .ct-if-none { font-size: 12.5px; margin: 0 0 4px; }
 
-      .ct-if-list { display: flex; flex-direction: column; gap: 4px; }
-      .ct-if-line { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; }
-      .ct-if-line:hover { border-color: #B9C9C2; }
-      .ct-if-line-main { min-width: 0; }
-      .ct-if-line-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-      .ct-if-arrow { color: var(--ink-soft); }
-      .ct-if-line-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 2px; color: var(--ink-soft); font-size: 11.5px; }
-      .ct-if-note { color: var(--c-teal); font-style: italic; }
-      .ct-if-badge { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; background: #EEF0E8; border-radius: 4px; padding: 1px 5px; color: var(--ink-soft); }
       .ct-if-edit { flex-shrink: 0; background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 5px; color: var(--ink-soft); cursor: pointer; display: inline-flex; }
       .ct-if-edit:hover { border-color: var(--line); color: var(--c-teal); background: var(--surface); }
       .ct-if-edit:focus-visible { outline: 2px solid var(--c-teal); outline-offset: 1px; }
 
-      .ct-if-others { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
-      .ct-if-other { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-      .ct-if-other-name { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
 
       .ct-if-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
       .ct-if-table th { background: #003759; color: #FFFFFF; font-weight: 500; font-size: 11.5px; text-align: left; padding: 7px 8px; position: sticky; top: 0; white-space: nowrap; }
@@ -756,8 +763,26 @@ function InterfacesStyle() {
       .ct-if-modal-actions .ct-btn-primary { background: var(--c-teal); color: #fff; border-color: var(--c-teal); }
       .ct-if-modal-actions .ct-btn-primary:hover { background: #185349; border-color: #185349; }
 
+      .ct-if-brand-cell { font-weight: 600; color: #003759; white-space: nowrap; }
+      .ct-if-person { padding: 6px 0 14px; }
+      .ct-if-person + .ct-if-person { border-top: 1px solid var(--line); padding-top: 14px; }
+      .ct-if-person-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+      .ct-if-person-head h3 { font-family: "Space Grotesk", sans-serif; font-size: 15px; margin: 0; }
+      .ct-if-person-table th:nth-child(1) { width: 18%; }
+      .ct-if-person-table th:nth-child(2) { width: 22%; }
+      .ct-if-person-table th:nth-child(3) { width: 22%; }
+      .ct-if-person-table th:nth-child(4) { width: 14%; }
+      .ct-if-person-table th:nth-child(5) { width: 6%; }
+      .ct-if-person-table { table-layout: fixed; }
+      .ct-if-roles { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+      .ct-if-role { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; border-radius: 12px; padding: 2px 8px; white-space: nowrap; }
+      .ct-if-role-watch { background: rgba(31,111,99,0.12); color: #185349; }
+      .ct-if-role-fix { background: rgba(0,55,89,0.1); color: #003759; }
+      .ct-if-divider { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); border-top: 2px solid var(--line); padding: 14px 0 4px; margin-top: 4px; }
+      .ct-if-without { font-size: 12.5px; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
+      .ct-if-note { color: var(--c-teal); font-style: italic; font-size: 11.5px; font-weight: 400; }
+
       @media (max-width: 480px) {
-        .ct-if-grid { grid-template-columns: 1fr; }
         .ct-if-search { max-width: none; }
       }
     `}</style>
