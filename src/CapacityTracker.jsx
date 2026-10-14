@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil, Link2 } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil, Link2, Network } from "lucide-react";
+import InterfacesView from "./InterfacesView.jsx";
 
 const PALETTE = [
   "#1F6F63",
@@ -342,7 +343,7 @@ function buildSeedData() {
 }
 
 export default function CapacityTracker() {
-  const [mode, setMode] = useState("dashboard"); // "dashboard" | "selfserve"
+  const [mode, setMode] = useState("dashboard"); // "dashboard" | "selfserve" | "trends" | "manageProjects" | "interfaces"
   const [data, setData] = useState({ projects: [], members: [], allocations: {} });
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadErrorState] = useState(false);
@@ -986,6 +987,7 @@ export default function CapacityTracker() {
             { id: "selfserve", label: "Update allocations", icon: Pencil },
             { id: "trends", label: "Trends", icon: TrendingUp },
             { id: "manageProjects", label: "Projects", icon: FolderCog },
+            { id: "interfaces", label: "Interfaces", icon: Network },
           ].map((tab) => {
             const Icon = tab.icon;
             const active = mode === tab.id;
@@ -1167,6 +1169,8 @@ export default function CapacityTracker() {
         />
       ) : mode === "trends" ? (
         <TrendsView data={data} statusColor={statusColor} />
+      ) : mode === "interfaces" ? (
+        <InterfacesView members={data.members} />
       ) : (
       <>
       {data.members.length === 0 ? (
