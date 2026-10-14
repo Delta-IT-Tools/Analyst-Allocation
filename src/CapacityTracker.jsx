@@ -124,7 +124,14 @@ export default function CapacityTracker() {
   const [mode, setMode] = useState("dashboard"); // "dashboard" | "selfserve"
   const [data, setData] = useState({ projects: [], members: [], allocations: {} });
   const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  const [loadError, setLoadErrorState] = useState(false);
+  // Mirror of loadError readable from timers and event listeners, which can
+  // hold stale closures. Always change it through setLoadError below.
+  const loadErrorRef = useRef(false);
+  function setLoadError(value) {
+    loadErrorRef.current = value;
+    setLoadErrorState(value);
+  }
   const [saveState, setSaveState] = useState("idle");
   const [currentUserId, setCurrentUserId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -206,7 +213,21 @@ export default function CapacityTracker() {
     };
   }, []);
 
-  function persist(nextData) {
+  // While the team's real data failed to load, the screen shows sample data.
+  // Saving anything then would overwrite the real board, so ordinary edits are
+  // blocked. Import and Restore pass { recovery: true }: they replace the board
+  // on purpose (after a confirm), which is also how to recover if the saved
+  // data is unreadable.
+  function persist(nextData, options = {}) {
+    if (loadErrorRef.current) {
+      if (!options.recovery) {
+        window.alert(
+          "Changes can't be saved right now: the team's data didn't load, so you're looking at sample data. Click Retry in the yellow banner first."
+        );
+        return;
+      }
+      setLoadError(false);
+    }
     setData(nextData);
     setSaveState("saving");
     pendingSaveData.current = nextData;
@@ -243,6 +264,7 @@ export default function CapacityTracker() {
   }
 
   async function writeBackupSnapshot(snapshotData) {
+    if (loadErrorRef.current) return;
     const key = `${BACKUP_PREFIX}${Date.now()}`;
     await window.storage.set(key, JSON.stringify(snapshotData), true);
     try {
@@ -259,6 +281,10 @@ export default function CapacityTracker() {
   }
 
   async function createBackupNow() {
+    if (loadErrorRef.current) {
+      setRestoreNotice("Can't create a backup until the team's data loads. Click Retry first.");
+      return;
+    }
     setRestoreNotice("Creating backup…");
     try {
       await writeBackupSnapshot(data);
@@ -297,7 +323,7 @@ export default function CapacityTracker() {
       const res = await window.storage.get(key, true);
       if (res && res.value) {
         const parsed = JSON.parse(res.value);
-        persist(parsed);
+        persist(parsed, { recovery: true });
         setRestoreNotice(`Restored to snapshot from ${label}.`);
         setShowBackups(false);
       }
@@ -334,7 +360,7 @@ export default function CapacityTracker() {
             "Import this file? This will overwrite the current board with the data in this file."
           );
           if (confirmed) {
-            persist(parsed);
+            persist(parsed, { recovery: true });
             setRestoreNotice("Imported data from file.");
           }
         } else {
@@ -532,7 +558,7 @@ export default function CapacityTracker() {
         <div className="ct-load-error">
           <AlertTriangle size={15} />
           <span>
-            Couldn't connect to the team's saved data — you're viewing sample starting data, not your team's real data. Don't make changes until this reconnects, or you may overwrite real data.
+            Couldn't connect to the team's saved data — you're viewing sample starting data, not your team's real data. Editing is paused until this reconnects, so nothing here can overwrite the real data.
           </span>
           <button type="button" className="ct-btn ct-btn-icon" onClick={loadData} title="Try reconnecting">
             Retry
