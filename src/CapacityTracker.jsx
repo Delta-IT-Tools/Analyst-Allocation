@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil, Link2 } from "lucide-react";
 
 const PALETTE = [
   "#1F6F63",
@@ -242,19 +242,32 @@ export default function CapacityTracker() {
   const [backupsList, setBackupsList] = useState([]);
   const [backupsLoading, setBackupsLoading] = useState(false);
   const [restoreNotice, setRestoreNotice] = useState("");
+  // Fingerprint of the board data as last loaded from / saved to the server.
+  // Saves send it back so they're refused if someone else saved in between.
+  const serverEtag = useRef(null);
+  // Bumped whenever fresh data replaces what's on screen, so any save that was
+  // queued against the old data is dropped instead of overwriting the new data.
+  const dataGeneration = useRef(0);
+  const [showLinks, setShowLinks] = useState(false);
+  const [links, setLinks] = useState({});
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linksError, setLinksError] = useState("");
+  const [linkNotice, setLinkNotice] = useState("");
 
   async function loadData() {
     setLoadError(false);
     try {
       const res = await window.storage.get(DATA_KEY, true);
       if (res && res.value) {
+        serverEtag.current = res.etag || null;
         setData(ensureHistory(JSON.parse(res.value)));
       } else {
         // Key genuinely doesn't exist yet — this is a true first-time load.
         const seed = buildSeedData();
         setData(seed);
         try {
-          await window.storage.set(DATA_KEY, JSON.stringify(seed), true);
+          const saved = await window.storage.set(DATA_KEY, JSON.stringify(seed), true);
+          serverEtag.current = (saved && saved.etag) || null;
         } catch (e2) {
           // seed will still show locally even if save fails
         }
@@ -265,7 +278,8 @@ export default function CapacityTracker() {
         const seed = buildSeedData();
         setData(seed);
         try {
-          await window.storage.set(DATA_KEY, JSON.stringify(seed), true);
+          const saved = await window.storage.set(DATA_KEY, JSON.stringify(seed), true);
+          serverEtag.current = (saved && saved.etag) || null;
         } catch (e2) {
           // seed will still show locally even if save fails
         }
@@ -295,6 +309,10 @@ export default function CapacityTracker() {
     function handleVisibilityOrUnload() {
       if (document.hidden) {
         flushPendingSave();
+      } else {
+        // Coming back to the tab: pick up anything others saved meanwhile
+        // (including update-form submissions) before the next edit.
+        refreshFromServer();
       }
     }
     document.addEventListener("visibilitychange", handleVisibilityOrUnload);
@@ -339,22 +357,116 @@ export default function CapacityTracker() {
     const toSave = pendingSaveData.current;
     if (toSave === null) return;
     pendingSaveData.current = null;
+    const generation = dataGeneration.current;
     // Chain this write after any write already in flight completes. This
     // guarantees writes land in the order they were made — a faster network
     // response for a later edit can never overwrite an earlier one anymore.
     saveChain.current = saveChain.current.then(async () => {
+      // Fresh data was loaded after this edit was queued; drop the stale save.
+      if (generation !== dataGeneration.current) return;
       try {
-        const ok = await window.storage.set(DATA_KEY, JSON.stringify(toSave), true);
+        const ok = await window.storage.set(DATA_KEY, JSON.stringify(toSave), true, {
+          ifMatch: serverEtag.current,
+        });
+        if (ok && ok.etag) serverEtag.current = ok.etag;
         setSaveState(ok ? "saved" : "error");
         if (ok) {
           // Best-effort recovery point. Never blocks or fails the main save.
           writeBackupSnapshot(toSave).catch(() => {});
         }
       } catch (e) {
+        if (e && e.code === "CONFLICT") {
+          // Someone else saved first. Don't overwrite their work: load the
+          // latest board and ask this person to redo their last change.
+          dataGeneration.current += 1;
+          pendingSaveData.current = null;
+          if (saveTimeout.current) {
+            clearTimeout(saveTimeout.current);
+            saveTimeout.current = null;
+          }
+          await loadData();
+          setSaveState("idle");
+          setRestoreNotice(
+            "Someone else saved changes (or an analyst used their update link) since this board was loaded. The latest version is now showing. Please redo your last change."
+          );
+          return;
+        }
         setSaveState("error");
       }
     });
     await saveChain.current;
+  }
+
+  // Quietly pick up changes others saved, but only when this browser has no
+  // edit waiting to be saved (those are protected by the save check instead).
+  async function refreshFromServer() {
+    if (loadErrorRef.current) return;
+    if (pendingSaveData.current !== null || saveTimeout.current) return;
+    try {
+      await saveChain.current;
+      const before = serverEtag.current;
+      const res = await window.storage.get(DATA_KEY, true);
+      if (!res || !res.value || !res.etag || res.etag === before) return;
+      if (pendingSaveData.current !== null || saveTimeout.current || serverEtag.current !== before) return;
+      dataGeneration.current += 1;
+      serverEtag.current = res.etag;
+      setData(ensureHistory(JSON.parse(res.value)));
+    } catch (e) {
+      // Not worth interrupting anyone over; the next save is still protected.
+    }
+  }
+
+  // ---------- Personal update links ----------
+  async function linksRequest(options) {
+    const res = await fetch("/api/links", { headers: { "Content-Type": "application/json" }, ...options });
+    if (res.status === 401) {
+      window.location.href = "/login";
+      throw new Error("Not authenticated");
+    }
+    if (!res.ok) throw new Error(`Links request failed: ${res.status}`);
+    const body = await res.json();
+    return body.links || {};
+  }
+
+  async function loadLinks() {
+    setLinksLoading(true);
+    setLinksError("");
+    try {
+      setLinks(await linksRequest({ method: "GET" }));
+    } catch (e) {
+      setLinksError("Couldn't load update links. Try again.");
+    }
+    setLinksLoading(false);
+  }
+
+  async function changeLink(member, action) {
+    if (action === "create" && links[member.id] &&
+        !window.confirm(`Make a new link for ${member.name}? Their current link will stop working.`)) return;
+    if (action === "revoke" &&
+        !window.confirm(`Turn off ${member.name}'s update link? It will stop working right away.`)) return;
+    setLinksError("");
+    try {
+      setLinks(await linksRequest({ method: "POST", body: JSON.stringify({ memberId: member.id, action }) }));
+      setLinkNotice(action === "create" ? `Link ready for ${member.name}.` : `${member.name}'s link is turned off.`);
+    } catch (e) {
+      setLinksError("Couldn't change that link. Try again.");
+    }
+  }
+
+  async function copyLink(member) {
+    const url = links[member.id];
+    if (!url) return;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch (e) {
+      window.prompt(`Copy ${member.name}'s update link:`, url);
+    }
+    requestUpdate(member.id);
+    setLinkNotice(
+      `${copied ? "Copied" : "Showed"} ${member.name}'s link and logged today as an update request.`
+    );
   }
 
   async function writeBackupSnapshot(snapshotData) {
@@ -788,6 +900,19 @@ export default function CapacityTracker() {
           >
             <History size={13} /> Backups
           </button>
+          <button
+            type="button"
+            className={showLinks ? "ct-util ct-util-on" : "ct-util"}
+            aria-expanded={showLinks}
+            onClick={() => {
+              setShowLinks((v) => !v);
+              setLinkNotice("");
+              if (!showLinks) loadLinks();
+            }}
+            title="Personal links each analyst can use to update their own allocation"
+          >
+            <Link2 size={13} /> Update links
+          </button>
           <button type="button" className="ct-util" onClick={createBackupNow} title="Save a recovery snapshot right now">
             <Check size={13} /> Create backup
           </button>
@@ -823,6 +948,55 @@ export default function CapacityTracker() {
                     <button type="button" className="ct-btn ct-btn-icon" onClick={() => restoreBackup(b.key, label)}>
                       Restore
                     </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showLinks && (
+        <div className="ct-panel ct-backups-panel">
+          <h2>Personal update links</h2>
+          <p className="ct-hint" style={{ marginBottom: 10 }}>
+            Each analyst gets their own link to update their allocation, with no password. A link can only change that
+            person's numbers. Copying a link also logs today as an update request. If a link is shared by mistake, make a
+            new one and the old one stops working.
+          </p>
+          {linkNotice && (
+            <p className="ct-hint ct-links-notice">
+              <Check size={13} /> {linkNotice}
+            </p>
+          )}
+          {linksError && <p className="ct-hint ct-links-error">{linksError}</p>}
+          {linksLoading ? (
+            <p className="ct-hint">Loading links…</p>
+          ) : (
+            <div className="ct-backups-list">
+              {data.members.map((m) => {
+                const hasLink = Boolean(links[m.id]);
+                return (
+                  <div key={m.id} className="ct-backups-row">
+                    <span>
+                      {m.name}
+                      {!hasLink && <span className="ct-links-none"> (no link yet)</span>}
+                    </span>
+                    <span className="ct-links-actions">
+                      {hasLink && (
+                        <button type="button" className="ct-btn ct-btn-icon" onClick={() => copyLink(m)}>
+                          Copy link
+                        </button>
+                      )}
+                      <button type="button" className="ct-btn ct-btn-icon" onClick={() => changeLink(m, "create")}>
+                        {hasLink ? "New link" : "Create link"}
+                      </button>
+                      {hasLink && (
+                        <button type="button" className="ct-btn ct-btn-icon" onClick={() => changeLink(m, "revoke")}>
+                          Turn off
+                        </button>
+                      )}
+                    </span>
                   </div>
                 );
               })}
@@ -2215,6 +2389,10 @@ function Style() {
       .ct-restore-notice-close { margin-left: auto; background: none; border: none; color: var(--c-teal); cursor: pointer; padding: 2px; }
       .ct-backups-panel { margin-top: 12px; }
       .ct-backups-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+      .ct-links-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+      .ct-links-none { color: var(--ink-soft); }
+      .ct-links-notice { display: flex; align-items: center; gap: 6px; color: var(--c-teal); margin-bottom: 8px; }
+      .ct-links-error { color: var(--c-danger); margin-bottom: 8px; }
       .ct-backups-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; }
       .ct-topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
       .ct-brand { display: flex; align-items: center; gap: 10px; }
