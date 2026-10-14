@@ -1966,8 +1966,11 @@ function ProjectTrend({ data, project, months, timelines, onPickMember }) {
           <thead>
             <tr>
               <th className="ct-trend-th-name">Analyst</th>
-              {months.map((mk) => (
-                <th key={mk}>{formatMonth(mk)}</th>
+              {months.map((mk, i) => (
+                <th key={mk} className={i === months.length - 1 ? "ct-trend-th-latest" : undefined}>
+                  {formatMonth(mk)}
+                  {i === months.length - 1 && <span className="ct-th-sub">Current</span>}
+                </th>
               ))}
               <th title="Change from the first month with data to the latest month, in percentage points">Change</th>
             </tr>
@@ -1991,10 +1994,16 @@ function ProjectTrend({ data, project, months, timelines, onPickMember }) {
                     const prevT = i > 0 ? timelines[id][i - 1] : null;
                     const prev = prevT && prevT.alloc ? prevT.alloc[project.id] || 0 : null;
                     const changed = t.recorded && prev !== null && prev !== v;
-                    const cls = ["ct-trend-cell", !t.recorded && "ct-trend-carried", changed && "ct-trend-changed"].filter(Boolean).join(" ");
+                    const isLatest = i === cols.length - 1;
+                    const cls = ["ct-trend-cell", isLatest ? "ct-trend-latest" : !t.recorded && "ct-trend-carried"].filter(Boolean).join(" ");
                     return (
                       <td key={c.month} className={cls} title={changed ? `Changed from ${prev}%` : undefined}>
                         {v ? `${v}%` : <span className="ct-td-empty">–</span>}
+                        {changed && (
+                          <span className={v > prev ? "ct-trend-arrow ct-trend-up" : "ct-trend-arrow ct-trend-down"} aria-label={`changed from ${prev}%`}>
+                            {v > prev ? "▲" : "▼"}
+                          </span>
+                        )}
                       </td>
                     );
                   })}
@@ -2008,17 +2017,25 @@ function ProjectTrend({ data, project, months, timelines, onPickMember }) {
           <tfoot>
             <tr>
               <td className="ct-trend-td-name ct-foot-label">FTE</td>
-              {cols.map((c) => (
-                <td key={c.month} className={c.recorded ? "ct-trend-cell ct-trend-total" : "ct-trend-cell ct-trend-total ct-trend-carried"}>
-                  {c.anyData ? formatFTE(c.total) : "–"}
-                </td>
-              ))}
+              {cols.map((c, i) => {
+                const isLatest = i === cols.length - 1;
+                const cls = [
+                  "ct-trend-cell ct-trend-total",
+                  isLatest ? "ct-trend-latest" : "ct-trend-past",
+                  !isLatest && !c.recorded && "ct-trend-carried",
+                ].filter(Boolean).join(" ");
+                return (
+                  <td key={c.month} className={cls}>
+                    {c.anyData ? formatFTE(c.total) : "–"}
+                  </td>
+                );
+              })}
               <td />
             </tr>
           </tfoot>
         </table>
       </div>
-      <p className="ct-caption">Bold values changed from the month before. Click a name to see that analyst's full project mix.</p>
+      <p className="ct-caption">The latest month is in bold. Arrows mark values that went up or down from the month before. Click a name to see that analyst's full project mix.</p>
 
       <div className="ct-trend-chart-section">
       <TrendChart columns={columns} series={series} unit="fte" />
@@ -2104,6 +2121,10 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
   }
 
   const firstWithData = timeline.find((t) => t.alloc);
+  const memberEvents = memberUpdates(data, member.id);
+  const lastUpdateMonth = memberEvents.length
+    ? monthKeyFromDate(new Date(memberEvents[memberEvents.length - 1].t))
+    : null;
 
   return (
     <>
@@ -2112,12 +2133,27 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           <thead>
             <tr>
               <th className="ct-trend-th-name">Project</th>
-              {timeline.map((t) => (
-                <th key={t.month} title={t.updateCount ? `${t.updateCount} update${t.updateCount === 1 ? "" : "s"} this month` : "No update this month"}>
-                  {formatMonth(t.month)}
-                  {t.updateCount > 1 && <span className="ct-th-sub">{t.updateCount} updates</span>}
-                </th>
-              ))}
+              {timeline.map((t, i) => {
+                const isLatest = i === timeline.length - 1;
+                return (
+                  <th
+                    key={t.month}
+                    className={isLatest ? "ct-trend-th-latest" : undefined}
+                    title={t.updateCount ? `${t.updateCount} update${t.updateCount === 1 ? "" : "s"} this month` : "No update this month"}
+                  >
+                    {formatMonth(t.month)}
+                    {isLatest ? (
+                      t.recorded || !lastUpdateMonth ? (
+                        <span className="ct-th-sub">{t.updateCount > 1 ? `Current, ${t.updateCount} updates` : "Current"}</span>
+                      ) : (
+                        <span className="ct-th-sub ct-th-stale">Last update {formatMonth(lastUpdateMonth)}</span>
+                      )
+                    ) : (
+                      t.updateCount > 1 && <span className="ct-th-sub">{t.updateCount} updates</span>
+                    )}
+                  </th>
+                );
+              })}
               <th title="Change from the first month with data to the latest month">Change</th>
             </tr>
           </thead>
@@ -2138,10 +2174,19 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
                     const v = t.alloc[pid] || 0;
                     const prev = i > 0 && timeline[i - 1].alloc ? timeline[i - 1].alloc[pid] || 0 : null;
                     const changed = t.recorded && prev !== null && prev !== v;
-                    const cls = ["ct-trend-cell", !t.recorded && "ct-trend-carried", changed && "ct-trend-changed"].filter(Boolean).join(" ");
+                    const isLatest = i === timeline.length - 1;
+                    const cls = [
+                      "ct-trend-cell",
+                      isLatest ? "ct-trend-latest" : !t.recorded && "ct-trend-carried",
+                    ].filter(Boolean).join(" ");
                     return (
                       <td key={t.month} className={cls} title={changed ? `Changed from ${prev}%` : undefined}>
                         {v ? `${v}%` : <span className="ct-td-empty">–</span>}
+                        {changed && (
+                          <span className={v > prev ? "ct-trend-arrow ct-trend-up" : "ct-trend-arrow ct-trend-down"} aria-label={`changed from ${prev}%`}>
+                            {v > prev ? "▲" : "▼"}
+                          </span>
+                        )}
                       </td>
                     );
                   })}
@@ -2155,11 +2200,17 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           <tfoot>
             <tr>
               <td className="ct-trend-td-name ct-foot-label">Total</td>
-              {timeline.map((t) => {
+              {timeline.map((t, i) => {
                 if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
                 const total = sumAlloc(t.alloc);
+                const isLatest = i === timeline.length - 1;
+                const cls = [
+                  "ct-trend-cell ct-trend-total",
+                  isLatest ? "ct-trend-latest" : "ct-trend-past",
+                  !isLatest && !t.recorded && "ct-trend-carried",
+                ].filter(Boolean).join(" ");
                 return (
-                  <td key={t.month} className={t.recorded ? "ct-trend-cell ct-trend-total" : "ct-trend-cell ct-trend-total ct-trend-carried"} style={t.recorded ? { color: statusColor(total) } : undefined}>
+                  <td key={t.month} className={cls} style={isLatest ? { color: statusColor(total) } : undefined}>
                     {total}%
                   </td>
                 );
@@ -2169,7 +2220,7 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
           </tfoot>
         </table>
       </div>
-      <p className="ct-caption">Bold values changed from the month before. Months with more than one update show a blend weighted by days. Change compares the first month with data to the latest month, in percentage points.</p>
+      <p className="ct-caption">The latest month is in bold. Arrows mark values that went up or down from the month before. Months with more than one update show a blend weighted by days. Change compares the first month with data to the latest month, in percentage points.</p>
 
       <div className="ct-trend-chart-section">
       <TrendChart
@@ -2313,7 +2364,7 @@ function TrendChart({ columns, series, unit }) {
           let acc = 0;
           const total = sumAlloc(c.values);
           return (
-            <g key={c.month} opacity={c.recorded ? 1 : 0.45}>
+            <g key={c.month} opacity={c.recorded || i === columns.length - 1 ? 1 : 0.45}>
               {c.values &&
                 series.map((sr) => {
                   const v = c.values[sr.id] || 0;
@@ -2330,9 +2381,9 @@ function TrendChart({ columns, series, unit }) {
                   );
                 })}
               {c.values && total > 0 && (
-                <text x={cx} y={y(total) - 6} textAnchor="middle" fontSize="11" fontWeight="600" fill="#1B2320">{fmt(total)}</text>
+                <text x={cx} y={y(total) - 6} textAnchor="middle" fontSize="11" fontWeight={i === columns.length - 1 ? "700" : "400"} fill={i === columns.length - 1 ? "#1B2320" : "#58635C"}>{fmt(total)}</text>
               )}
-              <text x={cx} y={H - 8} textAnchor="middle" fontSize="11" fill="#58635C">{formatMonth(c.month)}</text>
+              <text x={cx} y={H - 8} textAnchor="middle" fontSize="11" fontWeight={i === columns.length - 1 ? "700" : "400"} fill={i === columns.length - 1 ? "#1B2320" : "#58635C"}>{formatMonth(c.month)}</text>
             </g>
           );
         })}
@@ -2591,6 +2642,13 @@ function Style() {
       .ct-restore-notice-close { margin-left: auto; background: none; border: none; color: var(--c-teal); cursor: pointer; padding: 2px; }
       .ct-backups-panel { margin-top: 12px; }
       .ct-backups-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+      .ct-trend-latest { font-weight: 700; color: var(--ink); }
+      .ct-trend-table th.ct-trend-th-latest { color: var(--ink); font-weight: 700; }
+      .ct-trend-total.ct-trend-past { font-weight: 400; }
+      .ct-trend-arrow { font-size: 8px; margin-left: 3px; vertical-align: 1px; }
+      .ct-trend-up { color: var(--c-teal); }
+      .ct-trend-down { color: var(--c-danger); }
+      .ct-th-stale { color: var(--c-amber) !important; font-weight: 500 !important; }
       .ct-th-sub { display: block; font-size: 10.5px; font-weight: 400; color: var(--ink-soft); margin-top: 2px; }
       .ct-update-log { margin-top: 22px; }
       .ct-update-log h3 { font-family: "Space Grotesk", sans-serif; font-size: 14px; margin: 0 0 8px; }
@@ -2649,7 +2707,6 @@ function Style() {
       .ct-trend-cell { text-align: right; font-family: "IBM Plex Mono", monospace; white-space: nowrap; }
       .ct-trend-carried { color: #A5ACA3 !important; }
       .ct-trend-none { color: #C5CBC2; }
-      .ct-trend-changed { font-weight: 700; }
       .ct-trend-total { font-weight: 600; border-top: 1px solid var(--line); }
       .ct-trend-delta { font-weight: 600; }
       .ct-trend-row-retired .ct-td-name-text { color: var(--ink-soft); }
