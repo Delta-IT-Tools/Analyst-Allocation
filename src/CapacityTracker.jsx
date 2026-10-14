@@ -1741,6 +1741,11 @@ const RANGE_OPTIONS = [
   { value: "all", label: "All history" },
 ];
 
+function formatShortDate(iso) {
+  const [y, m, d] = String(iso).split("-");
+  return y && m && d ? `${m}/${d}/${y.slice(2)}` : iso;
+}
+
 function TrendsView({ data, statusColor }) {
   const [view, setView] = useState("analyst"); // "analyst" | "project"
   const [memberId, setMemberId] = useState("");
@@ -1789,17 +1794,7 @@ function TrendsView({ data, statusColor }) {
                 By project
               </button>
             </div>
-            {view === "analyst" ? (
-              <div className="ct-identity">
-                <label htmlFor="ct-trend-who">Analyst</label>
-                <select id="ct-trend-who" value={memberId} onChange={(e) => setMemberId(e.target.value)}>
-                  <option value="">Whole team</option>
-                  {data.members.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
+            {view === "project" && (
               <div className="ct-identity">
                 <label htmlFor="ct-trend-proj">Project</label>
                 <select id="ct-trend-proj" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
@@ -1810,6 +1805,7 @@ function TrendsView({ data, statusColor }) {
                 </select>
               </div>
             )}
+            {(view === "project" || member) && (
             <div className="ct-identity">
               <label htmlFor="ct-trend-range">Range</label>
               <select id="ct-trend-range" value={range} onChange={(e) => setRange(e.target.value)}>
@@ -1818,11 +1814,15 @@ function TrendsView({ data, statusColor }) {
                 ))}
               </select>
             </div>
+            )}
           </div>
         </div>
-        {view === "analyst" && member ? (
+
+        {view === "analyst" ? (
         <p className="ct-hint" style={{ marginBottom: 12 }}>
-          Showing each update {member.name} actually submitted, on the date they submitted it.
+          {member
+            ? `Showing each update ${member.name} actually submitted, on the date they submitted it.`
+            : "Choose a resource to see how their allocation has changed over time."}
         </p>
         ) : (
         <p className="ct-hint" style={{ marginBottom: 12 }}>
@@ -1831,12 +1831,32 @@ function TrendsView({ data, statusColor }) {
         </p>
         )}
 
+        {view === "analyst" && (
+          <div className="ct-trend-people" role="group" aria-label="Choose a resource">
+            {data.members.map((m) => {
+              const on = m.id === memberId;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={on ? "ct-trend-person ct-trend-person-on" : "ct-trend-person"}
+                  aria-pressed={on}
+                  onClick={() => setMemberId(on ? "" : m.id)}
+                >
+                  <span className="ct-trend-person-name">{m.name}</span>
+                  <span className="ct-trend-person-date">
+                    {m.lastUpdated ? `Updated ${formatShortDate(m.lastUpdated)}` : "No updates yet"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {view === "analyst" ? (
           member ? (
             <MemberTrend data={data} member={member} months={months} projById={projById} statusColor={statusColor} />
-          ) : (
-            <TeamTrend data={data} months={months} statusColor={statusColor} onPick={pickMember} />
-          )
+          ) : null
         ) : project ? (
           <ProjectTrend data={data} project={project} months={months} timelines={timelines} onPickMember={pickMember} />
         ) : (
@@ -2063,51 +2083,6 @@ function ProjectTrend({ data, project, months, timelines, onPickMember }) {
   );
 }
 
-function TeamTrend({ data, months, statusColor, onPick }) {
-  return (
-    <div className="ct-table-wrap">
-      <table className="ct-trend-table">
-        <thead>
-          <tr>
-            <th className="ct-trend-th-name">Total allocation</th>
-            {months.map((mk) => (
-              <th key={mk}>{formatMonth(mk)}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.members.map((m) => {
-            const timeline = memberTimeline(data, m.id, months);
-            return (
-              <tr key={m.id}>
-                <td className="ct-trend-td-name">
-                  <button type="button" className="ct-trend-name-btn" onClick={() => onPick(m.id)} title={`See ${m.name}'s project breakdown`}>
-                    {m.name}
-                  </button>
-                </td>
-                {timeline.map((t) => {
-                  if (!t.alloc) return <td key={t.month} className="ct-trend-cell ct-trend-none">–</td>;
-                  const total = sumAlloc(t.alloc);
-                  return (
-                    <td
-                      key={t.month}
-                      className={t.recorded ? "ct-trend-cell" : "ct-trend-cell ct-trend-carried"}
-                      style={t.recorded ? { color: statusColor(total) } : undefined}
-                      title={t.recorded ? "Updated this month" : "No update this month — carried forward"}
-                    >
-                      {total}%
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <p className="ct-caption">Click a name to see how their time was split across projects.</p>
-    </div>
-  );
-}
 
 function updateDateLabel(u) {
   return new Date(u.t).toLocaleDateString(undefined, {
@@ -2717,6 +2692,14 @@ function Style() {
       .ct-trend-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; margin: 0 0 14px; }
       .ct-trend-legend-item { display: inline-flex; align-items: center; gap: 6px; }
       .ct-trend-legend-retired { color: var(--ink-soft); }
+      .ct-trend-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 4px 0 14px; }
+      .ct-trend-person { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-family: inherit; color: var(--ink); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+      .ct-trend-person:hover { border-color: var(--c-teal); }
+      .ct-trend-person:focus-visible { outline: 2px solid var(--c-teal); outline-offset: 1px; }
+      .ct-trend-person-on { background: var(--c-teal); border-color: var(--c-teal); color: #fff; }
+      .ct-trend-person-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 14px; }
+      .ct-trend-person-date { font-size: 11.5px; color: var(--ink-soft); }
+      .ct-trend-person-on .ct-trend-person-date { color: rgba(255,255,255,0.85); }
       .ct-trend-table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
       .ct-trend-table th { font-weight: 500; color: var(--ink-soft); text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
       .ct-trend-table th.ct-trend-th-name { text-align: left; }
