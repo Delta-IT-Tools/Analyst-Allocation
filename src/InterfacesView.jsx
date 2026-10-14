@@ -9,6 +9,8 @@ import { Pencil, X, Check, AlertTriangle, Search, Eye, Wrench } from "lucide-rea
 // can't silently overwrite each other: on a conflict the latest data is
 // reloaded and the edit is re-applied on top of it.
 //
+// Record fields: id, brands (["Bare Necessities"]), interface, source, check,
+// msgType, status ("Enabled" | "Disabled"), monitors, resolvers.
 // Ownership format (unchanged from the standalone Interface Support Tracker):
 //   monitors:  [{ name, note }]  — who watches it; [{ name: "Unassigned" }] = gap
 //   resolvers: [{ name, note }]  — who fixes it;   [{ name: "Unassigned" }] = gap,
@@ -17,57 +19,56 @@ import { Pencil, X, Check, AlertTriangle, Search, Eye, Wrench } from "lucide-rea
 export const INTERFACES_KEY = "capacity-interfaces";
 const UNASSIGNED = "Unassigned";
 
-const SEED_INTERFACES = 
-[
-  {"id": 1, "interface": "Item Master", "source": "Movex", "destination": "Manhattan", "check": "Manhattan WM", "msgType": "", "partner": "", "monitors": [{"name": "Shelly", "note": "errors on WM side"}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 2, "interface": "Orders", "source": "Movex", "destination": "Manhattan", "check": "QV Report", "msgType": "", "partner": "", "monitors": [{"name": "CS", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 3, "interface": "PIX", "source": "Movex", "destination": "Manhattan", "check": "Movex", "msgType": "", "partner": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 4, "interface": "Ship Confirm", "source": "Movex", "destination": "Manhattan", "check": "Movex", "msgType": "", "partner": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 5, "interface": "Inventory Variance", "source": "Movex", "destination": "Manhattan", "check": "Movex", "msgType": "", "partner": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 6, "interface": "Item Master", "source": "Movex", "destination": "IntraOne", "check": "Team Central", "msgType": "", "partner": "", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 7, "interface": "Orders", "source": "Movex", "destination": "IntraOne", "check": "QV Report", "msgType": "", "partner": "", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 8, "interface": "PIX", "source": "Movex", "destination": "IntraOne", "check": "Movex", "msgType": "", "partner": "", "monitors": [{"name": "Paul", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 9, "interface": "Ship Confirm", "source": "Movex", "destination": "IntraOne", "check": "Movex", "msgType": "", "partner": "", "monitors": [{"name": "Paul", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 10, "interface": "Inventory Variance", "source": "Movex", "destination": "IntraOne", "check": "Movex", "msgType": "", "partner": "", "monitors": [{"name": "Paul", "note": null}], "resolvers": [{"name": "Brent", "note": null}, {"name": "Paul", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 11, "interface": "Inventory", "source": "Movex", "destination": "Shopify - Bare Necessities", "check": "Movex/Matrixify", "msgType": "407", "partner": "WEB-BN", "monitors": [{"name": "Diego", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Bare Necessities"]},
-  {"id": 12, "interface": "Orders", "source": "Movex", "destination": "Shopify - Bare Necessities", "check": "Movex", "msgType": "409", "partner": "WEB-BN", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Bare Necessities"]},
-  {"id": 13, "interface": "Ship Confirm", "source": "Movex", "destination": "Shopify - Bare Necessities", "check": "Movex", "msgType": "413", "partner": "WEB-BN", "monitors": [{"name": "CS", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Bare Necessities"]},
-  {"id": 14, "interface": "Documentation", "source": "Movex", "destination": "IntraOne", "check": "Sharepoint", "msgType": "", "partner": "", "monitors": [{"name": "Brent", "note": null}, {"name": "Paul", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 15, "interface": "Shopify Documentation", "source": "Movex", "destination": "Shopify - Bare Necessities", "check": "Sharepoint", "msgType": "", "partner": "", "flowOverride": "Sharepoint", "monitors": [{"name": "Diego", "note": null}], "resolvers": [], "brands": ["Bare Necessities"]},
-  {"id": 16, "interface": "Barrett Documentation", "source": "Movex", "destination": "Barrett - Bare Necessities", "check": "Sharepoint", "msgType": "", "partner": "", "flowOverride": "Sharepoint", "monitors": [{"name": "Shelly", "note": null}, {"name": "Sayre", "note": null}], "resolvers": [], "brands": ["Bare Necessities"]},
-  {"id": 17, "interface": "Techsera", "source": "Movex", "destination": "OMNI", "check": "OMNI", "msgType": "", "partner": "", "monitors": [{"name": "Shelly", "note": null}, {"name": "Diego", "note": null}, {"name": "Sayre", "note": null}], "resolvers": [{"name": "Abhijeet", "note": null}], "brands": ["Bare Necessities"]},
-  {"id": 18, "interface": "Anaplan", "source": "Movex", "destination": "Anaplan", "check": "Anaplan", "msgType": "", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["Splendid"]},
-  {"id": 19, "interface": "xStore Integration", "source": "Movex", "destination": "xStore", "check": "xStore", "msgType": "", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["7FAM"]},
-  {"id": 20, "interface": "Inventory", "source": "Movex", "destination": "Shopify - Splendid / KWI", "check": "", "msgType": "407", "partner": "WEB-SPL", "monitors": [{"name": "Diego", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Splendid"]},
-  {"id": 21, "interface": "Orders", "source": "Movex", "destination": "Shopify - Splendid", "check": "", "msgType": "409", "partner": "WEB-SPL", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Splendid"]},
-  {"id": 22, "interface": "Ship Confirm", "source": "Movex", "destination": "Shopify - Splendid / KWI", "check": "", "msgType": "413", "partner": "WEB-SPL", "monitors": [{"name": "CS", "note": "Nicole"}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Splendid"]},
-  {"id": 23, "interface": "Inventory", "source": "Movex", "destination": "Shopify - FBM", "check": "", "msgType": "407", "partner": "WEB-FBM", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["FBM"]},
-  {"id": 24, "interface": "Orders", "source": "Movex", "destination": "Shopify - FBM", "check": "", "msgType": "409", "partner": "", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 25, "interface": "Ship Confirm", "source": "Movex", "destination": "Shopify - FBM", "check": "", "msgType": "413", "partner": "WEB-FBM", "monitors": [{"name": "CS", "note": "Nicole"}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 26, "interface": "Ship Confirm", "source": "Movex", "destination": "Shopify - PJ Salvage", "check": "", "msgType": "413", "partner": "", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["PJ Salvage"]},
-  {"id": 27, "interface": "Inventory", "source": "Movex", "destination": "Shopify - PJ Salvage", "check": "", "msgType": "407", "partner": "", "monitors": [{"name": "Tierra", "note": "CS"}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["PJ Salvage"]},
-  {"id": 28, "interface": "Orders", "source": "Movex", "destination": "Shopify - PJ Salvage", "check": "", "msgType": "407", "partner": "", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["PJ Salvage"]},
-  {"id": 29, "interface": "Item Master", "source": "Movex", "destination": "KWI", "check": "", "msgType": "646", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 30, "interface": "Attribute Master", "source": "Movex", "destination": "KWI", "check": "", "msgType": "648", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 31, "interface": "Ship Confirm", "source": "Movex", "destination": "KWI", "check": "", "msgType": "856", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 32, "interface": "Purchase Orders (Ecom)", "source": "Movex", "destination": "KWI", "check": "", "msgType": "446", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 33, "interface": "Orders", "source": "Movex", "destination": "Inspectario", "check": "", "msgType": "628", "partner": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 34, "interface": "Customers", "source": "Movex", "destination": "NuOrder", "check": "", "msgType": "", "partner": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 35, "interface": "PO Load", "source": "Movex", "destination": "Nexus", "check": "Email Report", "msgType": "630", "partner": "", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 36, "interface": "ASN", "source": "Movex", "destination": "Nexus", "check": "Movex/EDZ100", "msgType": "635", "partner": "", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 37, "interface": "RA Load", "source": "Movex", "destination": "Narvar", "check": "EDZ100", "msgType": "486", "partner": "", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["Splendid", "FBM", "Bare Necessities"]},
-  {"id": 38, "interface": "RA Load", "source": "Movex", "destination": "Narvar", "check": "EDZ100", "msgType": "464", "partner": "", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "brands": ["PJ Salvage"]},
-  {"id": 39, "interface": "Drop Ship Orders", "source": "Movex", "destination": "Nordstrom/Neimans", "check": "EDZ100", "msgType": "486", "partner": "", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Sandy", "note": null}], "brands": ["Internal / All Brands"]},
-  {"id": 40, "interface": "Drop Ship Orders", "source": "Movex", "destination": "All others", "check": "EDZ100", "msgType": "471", "partner": "", "monitors": [{"name": "EDI team", "note": null}], "resolvers": [{"name": "Sandy", "note": null}], "brands": ["Internal / All Brands"]}
+const SEED_INTERFACES = [
+  {"id": 1, "brands": ["7FAM"], "interface": "XStore Integration", "source": "Movex", "check": "xStore", "msgType": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Enabled"},
+  {"id": 2, "brands": ["Bare Necessities"], "interface": "ASN", "source": "Nexus", "check": "Movex - EDZ100", "msgType": "635", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 3, "brands": ["Bare Necessities"], "interface": "Inventory", "source": "Movex", "check": "Shopify", "msgType": "407", "monitors": [{"name": "Shelly", "note": null}, {"name": "Sayre", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 4, "brands": ["Bare Necessities"], "interface": "Orders", "source": "Shopify", "check": "Movex", "msgType": "409", "monitors": [{"name": "Diego", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 5, "brands": ["Bare Necessities"], "interface": "Ship Confirmation", "source": "Shopify", "check": "Movex", "msgType": "413", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 6, "brands": ["Bare Necessities"], "interface": "Returns", "source": "Shopify", "check": "Movex", "msgType": "", "monitors": [{"name": "Customer Service", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Disabled"},
+  {"id": 7, "brands": ["Bare Necessities"], "interface": "Techsera", "source": "Movex / Shopify", "check": "Omni", "msgType": "", "monitors": [{"name": "Diego", "note": null}, {"name": "Shelly", "note": null}, {"name": "Sayre", "note": null}], "resolvers": [{"name": "Abhijeet", "note": null}, {"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 8, "brands": ["FBM"], "interface": "ASN", "source": "Nexus", "check": "Movex - EDZ100", "msgType": "635", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 9, "brands": ["FBM"], "interface": "Inventory", "source": "Movex", "check": "Shopify", "msgType": "407", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 10, "brands": ["FBM"], "interface": "Orders", "source": "Shopify", "check": "Movex", "msgType": "409", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 11, "brands": ["FBM"], "interface": "Ship Confirmation", "source": "Shopify", "check": "Movex", "msgType": "413", "monitors": [{"name": "Customer Service", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 12, "brands": ["PJ Salvage"], "interface": "ASN", "source": "Nexus", "check": "Movex - EDZ100", "msgType": "635", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 13, "brands": ["PJ Salvage"], "interface": "Inventory", "source": "Movex", "check": "Shopify", "msgType": "407", "monitors": [{"name": "Tierra", "note": null}, {"name": "Customer Service", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 14, "brands": ["PJ Salvage"], "interface": "Orders", "source": "Shopify", "check": "Movex", "msgType": "407", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 15, "brands": ["PJ Salvage"], "interface": "Ship Confirmation", "source": "Shopify", "check": "Movex", "msgType": "413", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 16, "brands": ["PJ Salvage"], "interface": "Returns", "source": "Shopify", "check": "Movex - EDZ100", "msgType": "464", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 17, "brands": ["Splendid"], "interface": "ASN", "source": "Nexus", "check": "Movex - EDZ100", "msgType": "635", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 18, "brands": ["Splendid"], "interface": "Anaplan Data Integration", "source": "Movex", "check": "Anaplan", "msgType": "", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Disabled"},
+  {"id": 19, "brands": ["Splendid"], "interface": "Inventory", "source": "Movex", "check": "Shopify", "msgType": "407", "monitors": [{"name": "Diego", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 20, "brands": ["Splendid"], "interface": "Orders", "source": "Shopify", "check": "Movex", "msgType": "409", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 21, "brands": ["Splendid"], "interface": "Ship Confirmation", "source": "Shopify", "check": "Movex", "msgType": "413", "monitors": [{"name": "Customer Service", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 22, "brands": ["Splendid"], "interface": "Returns", "source": "Shopify", "check": "Movex - EDZ100", "msgType": "486", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Diego", "note": null}], "status": "Enabled"},
+  {"id": 23, "brands": ["Tifton Warehouse (Automation)"], "interface": "Inventory Variance", "source": "IntraOne", "check": "Movex", "msgType": "", "monitors": [{"name": "Paul", "note": null}], "resolvers": [{"name": "Paul", "note": null}, {"name": "Brent", "note": null}], "status": "Enabled"},
+  {"id": 24, "brands": ["Tifton Warehouse (Automation)"], "interface": "Item Master", "source": "Movex", "check": "IntraOne", "msgType": "", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 25, "brands": ["Tifton Warehouse (Automation)"], "interface": "Orders", "source": "IntraOne", "check": "QlikView", "msgType": "", "monitors": [{"name": "Unassigned", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 26, "brands": ["Tifton Warehouse (Automation)"], "interface": "Ship Confirmation", "source": "IntraOne", "check": "Movex", "msgType": "", "monitors": [{"name": "Paul", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 27, "brands": ["Tifton Warehouse (Automation)"], "interface": "PIX", "source": "IntraOne", "check": "Movex", "msgType": "", "monitors": [{"name": "Paul", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 28, "brands": ["Fontana Warehouse"], "interface": "Inventory Variance", "source": "Manhattan", "check": "Movex - EDZ100", "msgType": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 29, "brands": ["Fontana Warehouse"], "interface": "Item Master", "source": "Movex", "check": "Manhattan", "msgType": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 30, "brands": ["Fontana Warehouse"], "interface": "Orders", "source": "Manhattan", "check": "QlikView", "msgType": "", "monitors": [{"name": "Customer Service", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 31, "brands": ["Fontana Warehouse"], "interface": "Ship Confirmation", "source": "Manhattan", "check": "Movex", "msgType": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 32, "brands": ["Fontana Warehouse"], "interface": "PO Load", "source": "Nexus", "check": "Email Report", "msgType": "630", "monitors": [{"name": "Dusko", "note": null}, {"name": "Zack", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 33, "brands": ["Fontana Warehouse"], "interface": "PIX", "source": "Manhattan", "check": "Movex", "msgType": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 34, "brands": ["KWI"], "interface": "Item Master", "source": "Movex", "check": "KWI", "msgType": "646", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Enabled"},
+  {"id": 35, "brands": ["KWI"], "interface": "Attribute Master", "source": "Movex", "check": "KWI", "msgType": "648", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Enabled"},
+  {"id": 36, "brands": ["KWI"], "interface": "Ship Confirmation", "source": "KWI", "check": "Movex", "msgType": "856", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Enabled"},
+  {"id": 37, "brands": ["KWI"], "interface": "Purchase Orders", "source": "Movex", "check": "KWI", "msgType": "446", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Enabled"},
+  {"id": 38, "brands": ["Inspectario"], "interface": "Orders", "source": "Movex", "check": "Inspectario", "msgType": "628", "monitors": [{"name": "Dusko", "note": null}], "resolvers": [{"name": "Dusko", "note": null}], "status": "Enabled"},
+  {"id": 39, "brands": ["NuOrder"], "interface": "Customers", "source": "Movex", "check": "NuOrder", "msgType": "", "monitors": [{"name": "Shelly", "note": null}], "resolvers": [{"name": "Unassigned", "note": null}], "status": "Enabled"},
+  {"id": 40, "brands": ["Cymbio"], "interface": "DS Orders (all)", "source": "Retailer", "check": "Movex", "msgType": "471", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Sandy", "note": null}], "status": "Enabled"},
+  {"id": 41, "brands": ["Cymbio"], "interface": "DS Orders (nordstrom/neimans)", "source": "Retailer", "check": "Movex", "msgType": "486", "monitors": [{"name": "EDI Team", "note": null}], "resolvers": [{"name": "Sandy", "note": null}], "status": "Enabled"}
 ];
 
 const GROUP_OPTIONS = [
   { value: "none", label: "No grouping" },
-  { value: "destination", label: "Destination" },
-  { value: "check", label: "Check system" },
+  { value: "source", label: "Source" },
+  { value: "check", label: "Check in" },
 ];
 
-const ALL_BRANDS_LABEL = "Internal / All Brands";
 
 function norm(name) {
   return String(name || "").trim().toLowerCase();
@@ -77,14 +78,19 @@ function assigned(list) {
   return (list || []).filter((p) => p && p.name && p.name !== UNASSIGNED);
 }
 
+function isDisabled(r) {
+  return String(r.status || "").toLowerCase() === "disabled";
+}
+
+// Disabled interfaces don't count as coverage gaps.
 function needsMonitor(r) {
-  return assigned(r.monitors).length === 0;
+  return !isDisabled(r) && assigned(r.monitors).length === 0;
 }
 
 // An empty resolvers list means "no fixer needed", so only an explicit
 // Unassigned entry counts as a gap.
 function needsFixer(r) {
-  return (r.resolvers || []).length > 0 && assigned(r.resolvers).length === 0;
+  return !isDisabled(r) && (r.resolvers || []).length > 0 && assigned(r.resolvers).length === 0;
 }
 
 function findPerson(list, name) {
@@ -96,18 +102,13 @@ function brandLabel(r) {
   return (r.brands || []).join(", ") || "—";
 }
 
-// Brand first (with "Internal / All Brands" last), then interface, then destination.
+// Keep the order of the master spreadsheet (grouped by brand / system).
 function compareRecords(a, b) {
-  const ab = brandLabel(a);
-  const bb = brandLabel(b);
-  const aInternal = ab === ALL_BRANDS_LABEL ? 1 : 0;
-  const bInternal = bb === ALL_BRANDS_LABEL ? 1 : 0;
-  return (
-    aInternal - bInternal ||
-    ab.localeCompare(bb) ||
-    a.interface.localeCompare(b.interface) ||
-    a.destination.localeCompare(b.destination)
-  );
+  return a.id - b.id;
+}
+
+function describe(r) {
+  return `${r.interface} (${brandLabel(r)})`;
 }
 
 function matchesQuery(r, q) {
@@ -115,8 +116,8 @@ function matchesQuery(r, q) {
   const hay = [
     r.interface,
     r.source,
-    r.destination,
     r.check,
+    r.status,
     r.msgType,
     r.partner,
     ...(r.brands || []),
@@ -129,7 +130,7 @@ function matchesQuery(r, q) {
 }
 
 function groupKey(r, groupBy) {
-  if (groupBy === "destination") return r.destination || "—";
+  if (groupBy === "source") return r.source || "Not specified";
   if (groupBy === "check") return r.check || "Not specified";
   return "all";
 }
@@ -171,7 +172,7 @@ export default function InterfacesView({ members }) {
       setStatus("ready");
     } catch (err) {
       if (err && err.code === "NOT_FOUND") {
-        // First use: load the 40 interfaces from the standalone tracker.
+        // First use: load the interfaces from the master spreadsheet.
         try {
           const saved = await window.storage.set(INTERFACES_KEY, JSON.stringify(SEED_INTERFACES), true);
           etagRef.current = saved.etag;
@@ -235,9 +236,10 @@ export default function InterfacesView({ members }) {
   }
 
   const brandOptions = useMemo(() => {
+    // In spreadsheet order, so brands come first and warehouses/systems after.
     const set = new Set();
-    records.forEach((r) => (r.brands || []).forEach((b) => set.add(b)));
-    return [...set].sort((a, b) => (a === ALL_BRANDS_LABEL) - (b === ALL_BRANDS_LABEL) || a.localeCompare(b));
+    [...records].sort(compareRecords).forEach((r) => (r.brands || []).forEach((b) => set.add(b)));
+    return [...set];
   }, [records]);
 
   const q = query.trim().toLowerCase();
@@ -330,9 +332,9 @@ export default function InterfacesView({ members }) {
           </div>
 
           <div className="ct-identity">
-            <label htmlFor="ct-if-brand">Brand</label>
+            <label htmlFor="ct-if-brand">Brand / System</label>
             <select id="ct-if-brand" value={brand} onChange={(e) => setBrand(e.target.value)}>
-              <option value="">All brands</option>
+              <option value="">All</option>
               {brandOptions.map((b) => (
                 <option key={b} value={b}>{b}</option>
               ))}
@@ -460,9 +462,9 @@ function PersonBlock({ person }) {
         <table className="ct-if-table ct-if-person-table">
           <thead>
             <tr>
-              <th>Brand</th>
+              <th>Brand / System</th>
               <th>Interface</th>
-              <th>Destination</th>
+              <th>Source</th>
               <th>Check in</th>
               <th>Msg</th>
               <th>Role</th>
@@ -470,13 +472,13 @@ function PersonBlock({ person }) {
           </thead>
           <tbody>
             {person.rows.map(({ record: r, watch, fix, note }) => (
-              <tr key={r.id}>
+              <tr key={r.id} className={isDisabled(r) ? "ct-if-row-disabled" : undefined}>
                 <td className="ct-if-brand-cell">{brandLabel(r)}</td>
                 <td>
-                  <strong>{r.interface}</strong>
+                  <InterfaceName record={r} />
                   {note && <div className="ct-if-note">{note}</div>}
                 </td>
-                <td>{r.destination}</td>
+                <td>{r.source || <span className="ct-hint">—</span>}</td>
                 <td>{r.check || <span className="ct-hint">—</span>}</td>
                 <td className="ct-if-mono">{r.msgType || ""}</td>
                 <td>
@@ -491,6 +493,15 @@ function PersonBlock({ person }) {
         </table>
       </div>
     </div>
+  );
+}
+
+function InterfaceName({ record: r }) {
+  return (
+    <>
+      <strong>{r.interface}</strong>
+      {isDisabled(r) && <span className="ct-if-disabled-tag">Disabled</span>}
+    </>
   );
 }
 
@@ -535,9 +546,9 @@ function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
         <table className="ct-if-table">
           <thead>
             <tr>
-              <th>Brand</th>
+              <th>Brand / System</th>
               <th>Interface</th>
-              <th>Destination</th>
+              <th>Source</th>
               <th>Check in</th>
               <th>Msg</th>
               <th>Monitored by</th>
@@ -552,8 +563,8 @@ function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
         </table>
       </div>
       <p className="ct-caption">
-        Teal names are analysts on this board; amber marks an interface that still needs someone. "No fixer needed" means the
-        interface has no fix step (for example, documentation).
+        Teal names are analysts on this board; amber marks an interface that still needs someone. Disabled interfaces are
+        greyed out and don't count as gaps.
       </p>
     </section>
   );
@@ -570,16 +581,16 @@ function GroupRows({ label, rows, memberNames, onEdit }) {
         </tr>
       )}
       {rows.map((r) => (
-        <tr key={`${label || ""}-${r.id}`}>
+        <tr key={`${label || ""}-${r.id}`} className={isDisabled(r) ? "ct-if-row-disabled" : undefined}>
           <td className="ct-if-brand-cell">{brandLabel(r)}</td>
-          <td><strong>{r.interface}</strong></td>
-          <td>{r.destination}</td>
+          <td><InterfaceName record={r} /></td>
+          <td>{r.source || <span className="ct-hint">—</span>}</td>
           <td>{r.check || <span className="ct-hint">—</span>}</td>
           <td className="ct-if-mono">{r.msgType || ""}</td>
           <td>
             <div className="ct-if-cell">
               <OwnerChips list={r.monitors} memberNames={memberNames} emptyLabel="Unassigned" />
-              <button type="button" className="ct-if-edit" onClick={() => onEdit(r.id, "monitor")} title="Edit watchers" aria-label={`Edit watchers: ${r.interface} → ${r.destination}`}>
+              <button type="button" className="ct-if-edit" onClick={() => onEdit(r.id, "monitor")} title="Edit watchers" aria-label={`Edit watchers: ${describe(r)}`}>
                 <Pencil size={12} />
               </button>
             </div>
@@ -587,7 +598,7 @@ function GroupRows({ label, rows, memberNames, onEdit }) {
           <td>
             <div className="ct-if-cell">
               <OwnerChips list={r.resolvers} memberNames={memberNames} emptyLabel="No fixer needed" />
-              <button type="button" className="ct-if-edit" onClick={() => onEdit(r.id, "resolve")} title="Edit fixers" aria-label={`Edit fixers: ${r.interface} → ${r.destination}`}>
+              <button type="button" className="ct-if-edit" onClick={() => onEdit(r.id, "resolve")} title="Edit fixers" aria-label={`Edit fixers: ${describe(r)}`}>
                 <Pencil size={12} />
               </button>
             </div>
@@ -658,7 +669,7 @@ function EditOwnersModal({ record, role, members, onClose, onSave }) {
       <div className="ct-network-modal ct-if-modal" role="dialog" aria-modal="true" aria-labelledby="ct-if-modal-title" onClick={(e) => e.stopPropagation()}>
         <div className="ct-network-modal-head">
           <h2 id="ct-if-modal-title">
-            {role === "monitor" ? "Who monitors" : "Who fixes"} {record.interface} → {record.destination}?
+            {role === "monitor" ? "Who monitors" : "Who fixes"} {describe(record)}?
           </h2>
           <button type="button" className="ct-btn ct-btn-icon" onClick={onClose} aria-label="Close">
             <X size={16} />
@@ -781,6 +792,11 @@ function InterfacesStyle() {
       .ct-if-divider { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); border-top: 2px solid var(--line); padding: 14px 0 4px; margin-top: 4px; }
       .ct-if-without { font-size: 12.5px; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
       .ct-if-note { color: var(--c-teal); font-style: italic; font-size: 11.5px; font-weight: 400; }
+
+      .ct-if-row-disabled td { color: var(--ink-soft); }
+      .ct-if-row-disabled td strong { color: var(--ink-soft); }
+      .ct-if-row-disabled .ct-if-chip { opacity: 0.6; }
+      .ct-if-disabled-tag { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8A4B2A; background: #F6E6DC; border-radius: 4px; padding: 1px 5px; vertical-align: 1px; }
 
       @media (max-width: 480px) {
         .ct-if-search { max-width: none; }
