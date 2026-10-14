@@ -1660,17 +1660,6 @@ function ProjectTrend({ data, project, months, timelines, onPickMember }) {
           <span className="ct-retired-tag" style={{ marginLeft: 0 }}>Retired {project.archivedAt ? formatMonth(monthKeyFromISO(project.archivedAt)) : ""}</span> No time is carried forward after the month it was retired.
         </p>
       )}
-      <TrendChart columns={columns} series={series} unit="fte" />
-
-      <div className="ct-trend-legend">
-        {series.map((sr) => (
-          <span key={sr.id} className="ct-trend-legend-item">
-            <span className="ct-dot" style={{ background: sr.color }} />
-            {sr.name}
-          </span>
-        ))}
-      </div>
-
       <div className="ct-table-wrap">
         <table className="ct-trend-table">
           <thead>
@@ -1729,6 +1718,19 @@ function ProjectTrend({ data, project, months, timelines, onPickMember }) {
         </table>
       </div>
       <p className="ct-caption">Bold values changed from the month before. Click a name to see that analyst's full project mix.</p>
+
+      <div className="ct-trend-chart-section">
+      <TrendChart columns={columns} series={series} unit="fte" />
+
+      <div className="ct-trend-legend">
+        {series.map((sr) => (
+          <span key={sr.id} className="ct-trend-legend-item">
+            <span className="ct-dot" style={{ background: sr.color }} />
+            {sr.name}
+          </span>
+        ))}
+      </div>
+      </div>
     </>
   );
 }
@@ -1804,25 +1806,6 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
 
   return (
     <>
-      <TrendChart
-        columns={timeline.map((t) => ({ month: t.month, values: t.alloc, recorded: t.recorded }))}
-        series={projectIds.map((pid) => ({ id: pid, name: projById[pid].name, color: projById[pid].color, hatched: !!projById[pid].archived }))}
-        unit="pct"
-      />
-
-      <div className="ct-trend-legend">
-        {projectIds.map((pid) => {
-          const p = projById[pid];
-          return (
-            <span key={pid} className={p.archived ? "ct-trend-legend-item ct-trend-legend-retired" : "ct-trend-legend-item"}>
-              <span className="ct-dot" style={{ background: p.color }} />
-              {p.name}
-              {p.archived && <span className="ct-retired-tag">Retired</span>}
-            </span>
-          );
-        })}
-      </div>
-
       <div className="ct-table-wrap">
         <table className="ct-trend-table">
           <thead>
@@ -1883,6 +1866,27 @@ function MemberTrend({ data, member, months, projById, statusColor }) {
         </table>
       </div>
       <p className="ct-caption">Bold values changed from the month before. Change compares the first month with data to the latest month, in percentage points.</p>
+
+      <div className="ct-trend-chart-section">
+      <TrendChart
+        columns={timeline.map((t) => ({ month: t.month, values: t.alloc, recorded: t.recorded }))}
+        series={projectIds.map((pid) => ({ id: pid, name: projById[pid].name, color: projById[pid].color, hatched: !!projById[pid].archived }))}
+        unit="pct"
+      />
+
+      <div className="ct-trend-legend">
+        {projectIds.map((pid) => {
+          const p = projById[pid];
+          return (
+            <span key={pid} className={p.archived ? "ct-trend-legend-item ct-trend-legend-retired" : "ct-trend-legend-item"}>
+              <span className="ct-dot" style={{ background: p.color }} />
+              {p.name}
+              {p.archived && <span className="ct-retired-tag">Retired</span>}
+            </span>
+          );
+        })}
+      </div>
+      </div>
     </>
   );
 }
@@ -2238,6 +2242,7 @@ function Style() {
       .ct-retired-tag { font-size: 10.5px; font-weight: 500; color: var(--ink-soft); background: #EEF0EA; border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; white-space: nowrap; }
       .ct-retired-row { color: var(--ink-soft); }
       .ct-trend-chart { margin: 4px 0 8px; }
+      .ct-trend-chart-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
       .ct-segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
       .ct-seg { background: var(--surface); border: none; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
       .ct-seg + .ct-seg { border-left: 1px solid var(--line); }
@@ -2250,7 +2255,9 @@ function Style() {
       .ct-trend-table th { font-weight: 500; color: var(--ink-soft); text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
       .ct-trend-table th.ct-trend-th-name { text-align: left; }
       .ct-trend-table td { padding: 6px 8px; border-bottom: 1px solid #EEF0EA; }
-      .ct-trend-td-name { display: flex; align-items: center; gap: 6px; min-width: 200px; max-width: 320px; white-space: nowrap; }
+      .ct-trend-td-name { min-width: 200px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .ct-trend-td-name > * { vertical-align: middle; }
+      .ct-trend-td-name > .ct-dot { display: inline-block; margin-right: 7px; }
       .ct-trend-cell { text-align: right; font-family: "IBM Plex Mono", monospace; white-space: nowrap; }
       .ct-trend-carried { color: #A5ACA3 !important; }
       .ct-trend-none { color: #C5CBC2; }
