@@ -340,15 +340,57 @@ function pruneZeros(alloc) {
   return out;
 }
 
+// Keep in sync with ensureHistory / updatesFromHistory / recordUpdate in
+// src/CapacityTracker.jsx.
+const UPDATE_COALESCE_MS = 30 * 60 * 1000;
+
 function ensureHistory(d) {
-  if (d && d.history && typeof d.history === "object") return d;
-  const history = {};
-  ((d && d.members) || []).forEach((m) => {
-    const mk = monthKeyFromISO(m.lastUpdated);
-    history[mk] = history[mk] || {};
-    history[mk][m.id] = pruneZeros((d.allocations || {})[m.id]);
-  });
-  return { ...d, history };
+  let out = d;
+  if (!(out && out.history && typeof out.history === "object")) {
+    const history = {};
+    ((out && out.members) || []).forEach((m) => {
+      const mk = monthKeyFromISO(m.lastUpdated);
+      history[mk] = history[mk] || {};
+      history[mk][m.id] = pruneZeros((out.allocations || {})[m.id]);
+    });
+    out = { ...out, history };
+  }
+  if (!Array.isArray(out.updates)) {
+    out = { ...out, updates: updatesFromHistory(out) };
+  }
+  return out;
+}
+
+function updatesFromHistory(d) {
+  const lastUpdated = {};
+  ((d && d.members) || []).forEach((m) => (lastUpdated[m.id] = m.lastUpdated || ""));
+  const updates = [];
+  Object.keys(d.history || {})
+    .sort()
+    .forEach((mk) => {
+      Object.entries(d.history[mk] || {}).forEach(([memberId, alloc]) => {
+        const lu = lastUpdated[memberId];
+        const day = lu && lu.slice(0, 7) === mk ? lu : `${mk}-01`;
+        updates.push({ memberId, at: `${day}T12:00:00.000Z`, alloc: pruneZeros(alloc), source: "import" });
+      });
+    });
+  return updates;
+}
+
+function recordUpdate(updates, memberId, alloc, source, nowMs = Date.now()) {
+  const list = [...(updates || [])];
+  const entry = { memberId, at: new Date(nowMs).toISOString(), alloc: pruneZeros(alloc), source };
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].memberId !== memberId) continue;
+    const prevMs = Date.parse(list[i].at);
+    if (list[i].source !== "import" && !Number.isNaN(prevMs) && nowMs - prevMs >= 0 && nowMs - prevMs < UPDATE_COALESCE_MS) {
+      list[i] = entry;
+      return list;
+    }
+    break;
+  }
+  list.push(entry);
+  return list;
 }
 
 // The form sends the month from the person's own clock (the board does the
@@ -464,6 +506,7 @@ async function handleFormSubmit(request, env, token) {
       allocations: { ...data.allocations, [memberId]: next },
       members: data.members.map((m) => (m.id === memberId ? { ...m, lastUpdated: today } : m)),
       history: { ...data.history, [monthKey]: { ...(data.history[monthKey] || {}), [memberId]: pruneZeros(next) } },
+      updates: recordUpdate(data.updates, memberId, next, "form"),
     };
     const json = JSON.stringify(updated);
 
