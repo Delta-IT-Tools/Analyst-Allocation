@@ -2,7 +2,7 @@
 
 A React app (Vite) served by a Cloudflare Worker, storing data in Cloudflare
 D1, gated behind a single shared password. This replaces the Claude.ai
-"artifact" version — same app, same code, but hosted somewhere you fully
+"artifact" version — same app, s ame code, but hosted somewhere you fully
 control.
 
 ## What you need first
