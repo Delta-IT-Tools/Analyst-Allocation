@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Pencil, X, Check, AlertTriangle, Search, Eye, Wrench } from "lucide-react";
+import { Pencil, X, Check, AlertTriangle, Search, Eye, Wrench, Plus, Trash2 } from "lucide-react";
 
 // Interfaces section of the IT Analyst Resource Tracker.
 //
@@ -102,9 +102,18 @@ function brandLabel(r) {
   return (r.brands || []).join(", ") || "—";
 }
 
-// Keep the order of the master spreadsheet (grouped by brand / system).
-function compareRecords(a, b) {
-  return a.id - b.id;
+// Keep the order of the master spreadsheet: brands in the order they first
+// appear, and within a brand by id, so a newly added interface lands at the
+// end of its own brand instead of the bottom of the whole list.
+function makeComparator(records) {
+  const rank = new Map();
+  [...records]
+    .sort((a, b) => a.id - b.id)
+    .forEach((r) => {
+      const b = brandLabel(r);
+      if (!rank.has(b)) rank.set(b, rank.size);
+    });
+  return (a, b) => (rank.get(brandLabel(a)) ?? 1e9) - (rank.get(brandLabel(b)) ?? 1e9) || a.id - b.id;
 }
 
 function describe(r) {
@@ -158,9 +167,10 @@ export default function InterfacesView({ members }) {
   const [query, setQuery] = useState("");
   const [groupBy, setGroupBy] = useState("none");
   const [editing, setEditing] = useState(null); // { id, role }
+  const [form, setForm] = useState(null); // { record } — record is null when adding
   const etagRef = useRef(null);
   const editingRef = useRef(null);
-  editingRef.current = editing;
+  editingRef.current = editing || form;
 
   async function load({ quiet = false } = {}) {
     if (!quiet) setStatus("loading");
@@ -202,9 +212,9 @@ export default function InterfacesView({ members }) {
     return () => clearTimeout(t);
   }, [saveState]);
 
-  async function saveOwners(id, role, list) {
-    const field = role === "monitor" ? "monitors" : "resolvers";
-    const apply = (recs) => recs.map((r) => (r.id === id ? { ...r, [field]: list } : r));
+  // Applies a change to the list and saves it. If someone else saved first,
+  // their version is reloaded and the same change is re-applied on top.
+  async function mutate(apply, doneMessage = "") {
     const next = apply(records);
     setRecords(next);
     setSaveState("saving");
@@ -213,9 +223,9 @@ export default function InterfacesView({ members }) {
       const saved = await window.storage.set(INTERFACES_KEY, JSON.stringify(next), true, { ifMatch: etagRef.current });
       etagRef.current = saved.etag;
       setSaveState("saved");
+      if (doneMessage) setNotice(doneMessage);
     } catch (err) {
       if (err && err.code === "CONFLICT") {
-        // Someone else saved first: take their version and re-apply this edit.
         try {
           const fresh = await window.storage.get(INTERFACES_KEY, true);
           const merged = apply(JSON.parse(fresh.value));
@@ -223,22 +233,43 @@ export default function InterfacesView({ members }) {
           etagRef.current = saved.etag;
           setRecords(merged);
           setSaveState("saved");
-          setNotice("Someone else changed interface assignments at the same time. Their changes were kept and yours was applied on top.");
+          setNotice("Someone else changed the interfaces at the same time. Their changes were kept and yours was applied on top.");
           return;
         } catch (e) {
           // fall through to the generic failure handling below
         }
       }
       setSaveState("error");
-      setNotice("That change couldn't be saved, so the latest saved assignments have been reloaded. Please try again.");
+      setNotice("That change couldn't be saved, so the latest saved interfaces have been reloaded. Please try again.");
       load({ quiet: true });
     }
+  }
+
+  function saveOwners(id, role, list) {
+    const field = role === "monitor" ? "monitors" : "resolvers";
+    mutate((recs) => recs.map((r) => (r.id === id ? { ...r, [field]: list } : r)));
+  }
+
+  function addInterface(fields) {
+    mutate(
+      (recs) => [...recs, { ...fields, id: recs.reduce((max, r) => Math.max(max, r.id || 0), 0) + 1 }],
+      `Added ${describe(fields)}.`
+    );
+  }
+
+  function updateInterface(id, fields) {
+    mutate((recs) => recs.map((r) => (r.id === id ? { ...r, ...fields, id } : r)), `Saved ${describe(fields)}.`);
+  }
+
+  function deleteInterface(record) {
+    if (!window.confirm(`Delete ${describe(record)}? This removes it from the Interfaces list for everyone.`)) return;
+    mutate((recs) => recs.filter((r) => r.id !== record.id), `Deleted ${describe(record)}.`);
   }
 
   const brandOptions = useMemo(() => {
     // In spreadsheet order, so brands come first and warehouses/systems after.
     const set = new Set();
-    [...records].sort(compareRecords).forEach((r) => (r.brands || []).forEach((b) => set.add(b)));
+    [...records].sort((a, b) => a.id - b.id).forEach((r) => (r.brands || []).forEach((b) => set.add(b)));
     return [...set];
   }, [records]);
 
@@ -248,7 +279,7 @@ export default function InterfacesView({ members }) {
       records
         .filter((r) => !brand || (r.brands || []).includes(brand))
         .filter((r) => matchesQuery(r, q))
-        .sort(compareRecords),
+        .sort(makeComparator(records)),
     [records, brand, q]
   );
   const memberNames = useMemo(() => new Set(members.map((m) => norm(m.name))), [members]);
@@ -313,8 +344,13 @@ export default function InterfacesView({ members }) {
       <section className="ct-panel">
         <div className="ct-panel-head-row">
           <h2>Interfaces</h2>
-          <span className={`ct-save ct-save-${saveState}`}>
-            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : ""}
+          <span className="ct-if-head-actions">
+            <span className={`ct-save ct-save-${saveState}`}>
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : ""}
+            </span>
+            <button type="button" className="ct-btn ct-if-add" onClick={() => setForm({ record: null })}>
+              <Plus size={14} /> Add interface
+            </button>
           </span>
         </div>
         <p className="ct-hint" style={{ marginBottom: 12 }}>
@@ -402,6 +438,7 @@ export default function InterfacesView({ members }) {
           groupBy={groupBy}
           memberNames={memberNames}
           onEdit={(id, role) => setEditing({ id, role })}
+          onEditDetails={(record) => setForm({ record })}
         />
       ) : (
         <section className="ct-panel">
@@ -429,6 +466,26 @@ export default function InterfacesView({ members }) {
           )}
           <p className="ct-caption">To change who watches or fixes an interface, use the pencil buttons in the Interfaces view.</p>
         </section>
+      )}
+
+      {form && (
+        <InterfaceFormModal
+          record={form.record}
+          records={records}
+          members={members}
+          defaultBrand={brand}
+          onClose={() => setForm(null)}
+          onSave={(fields) => {
+            const rec = form.record;
+            setForm(null);
+            if (rec) updateInterface(rec.id, fields);
+            else addInterface(fields);
+          }}
+          onDelete={(rec) => {
+            setForm(null);
+            deleteInterface(rec);
+          }}
+        />
       )}
 
       {editing && editingRecord && (
@@ -523,7 +580,7 @@ function OwnerChips({ list, memberNames, emptyLabel }) {
   );
 }
 
-function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
+function AllInterfacesTable({ records, groupBy, memberNames, onEdit, onEditDetails }) {
   const groups = useMemo(() => {
     const map = new Map();
     records.forEach((r) => {
@@ -557,20 +614,20 @@ function AllInterfacesTable({ records, groupBy, memberNames, onEdit }) {
           </thead>
           <tbody>
             {groups.map(([key, rows]) => (
-              <GroupRows key={key} label={groupBy === "none" ? null : key} rows={rows} memberNames={memberNames} onEdit={onEdit} />
+              <GroupRows key={key} label={groupBy === "none" ? null : key} rows={rows} memberNames={memberNames} onEdit={onEdit} onEditDetails={onEditDetails} />
             ))}
           </tbody>
         </table>
       </div>
       <p className="ct-caption">
-        Teal names are analysts on this board; amber marks an interface that still needs someone. Disabled interfaces are
-        greyed out and don't count as gaps.
+        Click an interface name to edit its details or delete it. Teal names are analysts on this board; amber marks an
+        interface that still needs someone. Disabled interfaces are greyed out and don't count as gaps.
       </p>
     </section>
   );
 }
 
-function GroupRows({ label, rows, memberNames, onEdit }) {
+function GroupRows({ label, rows, memberNames, onEdit, onEditDetails }) {
   return (
     <>
       {label && (
@@ -583,7 +640,11 @@ function GroupRows({ label, rows, memberNames, onEdit }) {
       {rows.map((r) => (
         <tr key={`${label || ""}-${r.id}`} className={isDisabled(r) ? "ct-if-row-disabled" : undefined}>
           <td className="ct-if-brand-cell">{brandLabel(r)}</td>
-          <td><InterfaceName record={r} /></td>
+          <td>
+            <button type="button" className="ct-if-name-btn" onClick={() => onEditDetails(r)} title="Edit or delete this interface">
+              <InterfaceName record={r} />
+            </button>
+          </td>
           <td>{r.source || <span className="ct-hint">—</span>}</td>
           <td>{r.check || <span className="ct-hint">—</span>}</td>
           <td className="ct-if-mono">{r.msgType || ""}</td>
@@ -609,20 +670,93 @@ function GroupRows({ label, rows, memberNames, onEdit }) {
   );
 }
 
-function EditOwnersModal({ record, role, members, onClose, onSave }) {
-  const field = role === "monitor" ? "monitors" : "resolvers";
-  const current = record[field] || [];
-  const memberByNorm = new Map(members.map((m) => [norm(m.name), m.name]));
+// ---------- People picker (shared by the quick owner editor and the interface form) ----------
 
-  const [checked, setChecked] = useState(() => new Set(assigned(current).filter((p) => memberByNorm.has(norm(p.name))).map((p) => norm(p.name))));
-  const [others, setOthers] = useState(() =>
-    assigned(current)
-      .filter((p) => !memberByNorm.has(norm(p.name)))
-      .map((p) => p.name)
-      .join(", ")
+function pickerInit(list, members, role) {
+  const memberSet = new Set(members.map((m) => norm(m.name)));
+  const people = assigned(list);
+  return {
+    checked: new Set(people.filter((p) => memberSet.has(norm(p.name))).map((p) => norm(p.name))),
+    others: people.filter((p) => !memberSet.has(norm(p.name))).map((p) => p.name).join(", "),
+    noFixer: role === "resolve" && (list || []).length === 0,
+  };
+}
+
+function pickerToList(state, current, members, role) {
+  if (role === "resolve" && state.noFixer) return [];
+  const names = [
+    ...members.filter((m) => state.checked.has(norm(m.name))).map((m) => m.name),
+    ...state.others.split(",").map((x) => x.trim()).filter(Boolean),
+  ];
+  const seen = new Set();
+  const list = [];
+  names.forEach((name) => {
+    const n = norm(name);
+    if (seen.has(n) || n === norm(UNASSIGNED)) return;
+    seen.add(n);
+    // Keep any note (e.g. "errors on WM side") for people who stay assigned.
+    const existing = (current || []).find((p) => norm(p.name) === n);
+    list.push({ name, note: existing ? existing.note || null : null });
+  });
+  return list.length ? list : [{ name: UNASSIGNED, note: null }];
+}
+
+function OwnerPicker({ role, state, setState, members, idPrefix, legend }) {
+  const disabled = role === "resolve" && state.noFixer;
+  function toggle(n) {
+    setState((prev) => {
+      const checked = new Set(prev.checked);
+      if (checked.has(n)) checked.delete(n);
+      else checked.add(n);
+      return { ...prev, checked };
+    });
+  }
+  return (
+    <div className="ct-if-picker">
+      <fieldset className="ct-if-fieldset" disabled={disabled}>
+        <legend>{legend}</legend>
+        <div className="ct-if-checks">
+          {members.map((m) => {
+            const n = norm(m.name);
+            return (
+              <label key={m.id} className={state.checked.has(n) ? "ct-if-check ct-if-check-on" : "ct-if-check"}>
+                <input type="checkbox" checked={state.checked.has(n)} onChange={() => toggle(n)} />
+                {m.name}
+              </label>
+            );
+          })}
+        </div>
+        <label className="ct-if-others-label" htmlFor={`${idPrefix}-others`}>
+          Other people or teams <span className="ct-hint">(comma-separated, e.g. Customer Service, EDI Team)</span>
+        </label>
+        <input
+          id={`${idPrefix}-others`}
+          className="ct-if-text"
+          value={state.others}
+          onChange={(e) => {
+            const others = e.target.value;
+            setState((prev) => ({ ...prev, others }));
+          }}
+        />
+      </fieldset>
+      {role === "resolve" && (
+        <label className="ct-if-nofixer">
+          <input
+            type="checkbox"
+            checked={state.noFixer}
+            onChange={(e) => {
+              const noFixer = e.target.checked;
+              setState((prev) => ({ ...prev, noFixer }));
+            }}
+          />
+          No fixer needed for this interface
+        </label>
+      )}
+    </div>
   );
-  const [noFixer, setNoFixer] = useState(role === "resolve" && current.length === 0);
+}
 
+function useEscape(onClose) {
   useEffect(() => {
     function onKey(e) {
       if (e.key === "Escape") onClose();
@@ -630,39 +764,15 @@ function EditOwnersModal({ record, role, members, onClose, onSave }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+}
 
-  function toggle(n) {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(n)) next.delete(n);
-      else next.add(n);
-      return next;
-    });
-  }
+// ---------- Quick editor for one column (pencil buttons) ----------
 
-  function handleSave() {
-    if (role === "resolve" && noFixer) {
-      onSave([]);
-      return;
-    }
-    const names = [
-      ...members.filter((m) => checked.has(norm(m.name))).map((m) => m.name),
-      ...others.split(",").map((s) => s.trim()).filter(Boolean),
-    ];
-    const seen = new Set();
-    const list = [];
-    names.forEach((name) => {
-      const n = norm(name);
-      if (seen.has(n) || n === norm(UNASSIGNED)) return;
-      seen.add(n);
-      // Keep any note (e.g. "errors on WM side") for people who stay assigned.
-      const existing = current.find((p) => norm(p.name) === n);
-      list.push({ name, note: existing ? existing.note || null : null });
-    });
-    onSave(list.length ? list : [{ name: UNASSIGNED, note: null }]);
-  }
-
-  const disabled = role === "resolve" && noFixer;
+function EditOwnersModal({ record, role, members, onClose, onSave }) {
+  const field = role === "monitor" ? "monitors" : "resolvers";
+  const current = record[field] || [];
+  const [state, setState] = useState(() => pickerInit(current, members, role));
+  useEscape(onClose);
 
   return (
     <div className="ct-network-backdrop" onClick={onClose}>
@@ -682,39 +792,145 @@ function EditOwnersModal({ record, role, members, onClose, onSave }) {
             : "Fixers resolve failures on this interface. Leave everyone unticked to mark it Unassigned."}
         </p>
 
-        <fieldset className="ct-if-fieldset" disabled={disabled}>
-          <legend>Analysts</legend>
-          <div className="ct-if-checks">
-            {members.map((m) => {
-              const n = norm(m.name);
-              return (
-                <label key={m.id} className={checked.has(n) ? "ct-if-check ct-if-check-on" : "ct-if-check"}>
-                  <input type="checkbox" checked={checked.has(n)} onChange={() => toggle(n)} />
-                  {m.name}
-                </label>
-              );
-            })}
-          </div>
-
-          <label className="ct-if-others-label" htmlFor="ct-if-others">
-            Other people or teams <span className="ct-hint">(comma-separated, e.g. CS, EDI team)</span>
-          </label>
-          <input id="ct-if-others" className="ct-if-text" value={others} onChange={(e) => setOthers(e.target.value)} />
-        </fieldset>
-
-        {role === "resolve" && (
-          <label className="ct-if-nofixer">
-            <input type="checkbox" checked={noFixer} onChange={(e) => setNoFixer(e.target.checked)} />
-            No fixer needed for this interface
-          </label>
-        )}
+        <OwnerPicker role={role} state={state} setState={setState} members={members} idPrefix="ct-if-quick" legend="Analysts" />
 
         <p className="ct-hint" style={{ fontSize: 12 }}>Notes on an assignment (like "errors on WM side") are kept for anyone who stays assigned.</p>
 
         <div className="ct-if-modal-actions">
           <button type="button" className="ct-btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="ct-btn ct-btn-primary" onClick={handleSave}>
+          <button type="button" className="ct-btn ct-btn-primary" onClick={() => onSave(pickerToList(state, current, members, role))}>
             <Check size={14} /> Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Add / edit / delete a whole interface ----------
+
+function uniqueValues(records, pick) {
+  const set = new Set();
+  [...records].sort((a, b) => a.id - b.id).forEach((r) => {
+    const v = pick(r);
+    (Array.isArray(v) ? v : [v]).forEach((x) => x && set.add(x));
+  });
+  return [...set];
+}
+
+function InterfaceFormModal({ record, records, members, defaultBrand, onClose, onSave, onDelete }) {
+  const isNew = !record;
+  const blankOwners = [{ name: UNASSIGNED, note: null }];
+  const [brand, setBrand] = useState(isNew ? defaultBrand || "" : brandLabel(record) === "—" ? "" : brandLabel(record));
+  const [name, setName] = useState(isNew ? "" : record.interface || "");
+  const [source, setSource] = useState(isNew ? "" : record.source || "");
+  const [check, setCheck] = useState(isNew ? "" : record.check || "");
+  const [msgType, setMsgType] = useState(isNew ? "" : record.msgType || "");
+  const [status, setStatus] = useState(isNew ? "Enabled" : isDisabled(record) ? "Disabled" : "Enabled");
+  const [watchers, setWatchers] = useState(() => pickerInit(isNew ? blankOwners : record.monitors, members, "monitor"));
+  const [fixers, setFixers] = useState(() => pickerInit(isNew ? blankOwners : record.resolvers, members, "resolve"));
+  const [error, setError] = useState("");
+  useEscape(onClose);
+
+  const brandList = useMemo(() => uniqueValues(records, (r) => r.brands || []), [records]);
+  const sourceList = useMemo(() => uniqueValues(records, (r) => r.source), [records]);
+  const checkList = useMemo(() => uniqueValues(records, (r) => r.check), [records]);
+
+  const duplicate = records.find(
+    (r) =>
+      (!record || r.id !== record.id) &&
+      norm(r.interface) === norm(name) &&
+      (r.brands || []).some((b) => norm(b) === norm(brand)) &&
+      norm(r.source) === norm(source)
+  );
+
+  function handleSave() {
+    const b = brand.trim();
+    const n = name.trim();
+    if (!b || !n) {
+      setError("Brand / System and Interface are required.");
+      return;
+    }
+    const brands = b.split(",").map((x) => x.trim()).filter(Boolean);
+    onSave({
+      brands,
+      interface: n,
+      source: source.trim(),
+      check: check.trim(),
+      msgType: msgType.trim(),
+      status,
+      monitors: pickerToList(watchers, isNew ? [] : record.monitors, members, "monitor"),
+      resolvers: pickerToList(fixers, isNew ? [] : record.resolvers, members, "resolve"),
+    });
+  }
+
+  return (
+    <div className="ct-network-backdrop" onClick={onClose}>
+      <div className="ct-network-modal ct-if-modal ct-if-form" role="dialog" aria-modal="true" aria-labelledby="ct-if-form-title" onClick={(e) => e.stopPropagation()}>
+        <div className="ct-network-modal-head">
+          <h2 id="ct-if-form-title">{isNew ? "Add an interface" : `Edit ${describe(record)}`}</h2>
+          <button type="button" className="ct-btn ct-btn-icon" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="ct-if-form-grid">
+          <label className="ct-if-field">
+            <span>Brand / System <em>*</em></span>
+            <input className="ct-if-text" list="ct-if-brand-list" value={brand} onChange={(e) => setBrand(e.target.value)} autoFocus={isNew} />
+          </label>
+          <label className="ct-if-field">
+            <span>Interface <em>*</em></span>
+            <input className="ct-if-text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ship Confirmation" />
+          </label>
+          <label className="ct-if-field">
+            <span>Source</span>
+            <input className="ct-if-text" list="ct-if-source-list" value={source} onChange={(e) => setSource(e.target.value)} />
+          </label>
+          <label className="ct-if-field">
+            <span>Check in</span>
+            <input className="ct-if-text" list="ct-if-check-list" value={check} onChange={(e) => setCheck(e.target.value)} />
+          </label>
+          <label className="ct-if-field">
+            <span>Msg type</span>
+            <input className="ct-if-text" value={msgType} onChange={(e) => setMsgType(e.target.value)} placeholder="e.g. 413" />
+          </label>
+          <label className="ct-if-field">
+            <span>Status</span>
+            <select className="ct-if-text" value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option>Enabled</option>
+              <option>Disabled</option>
+            </select>
+          </label>
+        </div>
+        <datalist id="ct-if-brand-list">{brandList.map((v) => <option key={v} value={v} />)}</datalist>
+        <datalist id="ct-if-source-list">{sourceList.map((v) => <option key={v} value={v} />)}</datalist>
+        <datalist id="ct-if-check-list">{checkList.map((v) => <option key={v} value={v} />)}</datalist>
+
+        {duplicate && (
+          <p className="ct-if-warn">
+            <AlertTriangle size={13} /> There's already a {duplicate.interface} interface for {brandLabel(duplicate)} from{" "}
+            {duplicate.source || "the same source"}. You can still save if this one is different.
+          </p>
+        )}
+
+        <div className="ct-if-form-owners">
+          <OwnerPicker role="monitor" state={watchers} setState={setWatchers} members={members} idPrefix="ct-if-form-mon" legend="Monitored by" />
+          <OwnerPicker role="resolve" state={fixers} setState={setFixers} members={members} idPrefix="ct-if-form-fix" legend="Fixed by" />
+        </div>
+
+        {error && <p className="ct-if-error">{error}</p>}
+
+        <div className="ct-if-modal-actions">
+          {!isNew && (
+            <button type="button" className="ct-btn ct-if-delete" onClick={() => onDelete(record)}>
+              <Trash2 size={14} /> Delete
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button type="button" className="ct-btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="ct-btn ct-btn-primary" onClick={handleSave}>
+            <Check size={14} /> {isNew ? "Add interface" : "Save"}
           </button>
         </div>
       </div>
@@ -798,8 +1014,27 @@ function InterfacesStyle() {
       .ct-if-row-disabled .ct-if-chip { opacity: 0.6; }
       .ct-if-disabled-tag { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8A4B2A; background: #F6E6DC; border-radius: 4px; padding: 1px 5px; vertical-align: 1px; }
 
+      .ct-if-head-actions { display: inline-flex; align-items: center; gap: 12px; }
+      .ct-btn.ct-if-add { display: inline-flex; align-items: center; gap: 5px; background: var(--c-teal); color: #fff; border-color: var(--c-teal); }
+      .ct-btn.ct-if-add:hover { background: #185349; border-color: #185349; }
+      .ct-if-name-btn { background: none; border: none; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+      .ct-if-name-btn:hover strong { text-decoration: underline; color: var(--c-teal); }
+      .ct-if-name-btn:focus-visible { outline: 2px solid var(--c-teal); outline-offset: 2px; border-radius: 3px; }
+      .ct-if-form { max-width: 680px; max-height: 88vh; overflow-y: auto; }
+      .ct-if-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin-bottom: 12px; }
+      .ct-if-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+      .ct-if-field em { color: var(--c-danger); font-style: normal; }
+      .ct-if-field .ct-if-text { font-weight: 400; color: var(--ink); background: var(--surface); }
+      .ct-if-form-owners { display: grid; grid-template-columns: 1fr; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
+      .ct-if-picker + .ct-if-picker { border-top: 1px dashed var(--line); padding-top: 10px; }
+      .ct-if-warn { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--c-amber); background: #FBF3E4; border-radius: 8px; padding: 7px 10px; margin: 0 0 10px; }
+      .ct-if-error { font-size: 12.5px; color: var(--c-danger); margin: 8px 0 0; }
+      .ct-btn.ct-if-delete { display: inline-flex; align-items: center; gap: 5px; color: var(--c-danger); }
+      .ct-btn.ct-if-delete:hover { border-color: var(--c-danger); background: #FBEDEC; }
+
       @media (max-width: 480px) {
         .ct-if-search { max-width: none; }
+        .ct-if-form-grid { grid-template-columns: 1fr; }
       }
     `}</style>
   );
