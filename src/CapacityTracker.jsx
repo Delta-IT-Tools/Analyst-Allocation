@@ -771,6 +771,44 @@ export default function CapacityTracker() {
     setAddingMember(false);
   }
 
+  // Permanently deletes a teammate: their column, current allocations,
+  // update history and personal update link. Meant for test or mistaken
+  // entries; there is no "retire" for people the way there is for projects.
+  async function removeMember(member) {
+    const confirmed = window.confirm(
+      `Permanently remove ${member.name}? Their allocations, update history and update link will be deleted. This can't be undone (except by restoring a backup).`
+    );
+    if (!confirmed) return;
+
+    const allocations = { ...data.allocations };
+    delete allocations[member.id];
+    const history = {};
+    Object.entries(data.history || {}).forEach(([mk, byMember]) => {
+      const rest = { ...byMember };
+      delete rest[member.id];
+      history[mk] = rest;
+    });
+    persist({
+      ...data,
+      members: data.members.filter((m) => m.id !== member.id),
+      allocations,
+      history,
+      updates: (data.updates || []).filter((u) => u.memberId !== member.id),
+    });
+
+    if (currentUserId === member.id) selectUser("");
+    if (selfServeUserId === member.id) setSelfServeUserId("");
+
+    if (links[member.id]) {
+      try {
+        setLinks(await linksRequest({ method: "POST", body: JSON.stringify({ memberId: member.id, action: "revoke" }) }));
+      } catch (e) {
+        // The teammate is gone either way; a leftover link can only edit a person who no longer exists.
+      }
+    }
+    setLinkNotice(`${member.name} has been removed.`);
+  }
+
   function restoreMissingMembers() {
     const existingNames = new Set(data.members.map((m) => m.name));
     const missingNames = SEED_MEMBER_NAMES.filter((name) => !existingNames.has(name));
@@ -1089,11 +1127,11 @@ export default function CapacityTracker() {
 
       {showLinks && (
         <div className="ct-panel ct-backups-panel">
-          <h2>Personal update links</h2>
+          <h2>Teammates &amp; update links</h2>
           <p className="ct-hint" style={{ marginBottom: 10 }}>
             Each analyst gets their own link to update their allocation, with no password. A link can only change that
             person's numbers. Copying a link also logs today as an update request. If a link is shared by mistake, make a
-            new one and the old one stops working.
+            new one and the old one stops working. Remove deletes a teammate and all their data for good.
           </p>
           {linkNotice && (
             <p className="ct-hint ct-links-notice">
@@ -1127,6 +1165,9 @@ export default function CapacityTracker() {
                           Turn off
                         </button>
                       )}
+                      <button type="button" className="ct-btn ct-btn-icon ct-btn-remove" onClick={() => removeMember(m)}>
+                        Remove
+                      </button>
                     </span>
                   </div>
                 );
@@ -2654,6 +2695,8 @@ function Style() {
       .ct-update-log-chip { display: inline-flex; align-items: center; gap: 5px; margin: 2px 10px 2px 0; font-size: 12.5px; white-space: nowrap; }
       .ct-links-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
       .ct-links-none { color: var(--ink-soft); }
+      .ct-btn.ct-btn-remove { color: var(--c-danger); }
+      .ct-btn.ct-btn-remove:hover { border-color: var(--c-danger); background: #FBEDEC; }
       .ct-links-notice { display: flex; align-items: center; gap: 6px; color: var(--c-teal); margin-bottom: 8px; }
       .ct-links-error { color: var(--c-danger); margin-bottom: 8px; }
       .ct-backups-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; }
