@@ -1308,7 +1308,7 @@ export default function CapacityTracker() {
                     {selectedProject.name}
                   </h3>
                   <span className="ct-total">
-                    {(projectTotal(selectedProject.id) / 100).toFixed(1)} FTE
+                    {formatFTE(projectTotal(selectedProject.id))} FTE
                   </span>
                 </div>
 
@@ -1406,7 +1406,7 @@ export default function CapacityTracker() {
                           </td>
                         );
                       })}
-                      <td className="ct-td-demand">{(projectTotal(p.id) / 100).toFixed(1)}</td>
+                      <td className="ct-td-demand">{formatFTE(projectTotal(p.id))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1446,7 +1446,7 @@ export default function CapacityTracker() {
                         }}
                       />
                     </div>
-                    <span className="ct-fte">{(projectTotal(p.id) / 100).toFixed(1)} FTE</span>
+                    <span className="ct-fte">{formatFTE(projectTotal(p.id))} FTE</span>
                   </div>
                 ))}
               </div>
@@ -1728,7 +1728,7 @@ function ProjectsManager({ data, addProject, retireProject, reactivateProject, p
                   <span className="ct-dot" style={{ background: p.color }} />
                   {p.name}
                   <span className="ct-hint" style={{ fontSize: 11.5 }}>
-                    {(projectTotal(p.id) / 100).toFixed(1)} FTE
+                    {formatFTE(projectTotal(p.id))} FTE
                   </span>
                 </span>
                 <button
@@ -1931,8 +1931,13 @@ function projectContributions(data, projectId, months, timelines) {
   });
 }
 
+// Allocations are whole percentage points, so round to the nearest 0.1 FTE
+// using integer math. (pct / 100).toFixed(1) rounds some halves down, because
+// values like 0.15 are stored as slightly less than 0.15 (15% showed 0.1 FTE).
+// Halves round away from zero so positive and negative changes match.
 function formatFTE(pctTotal) {
-  return (pctTotal / 100).toFixed(1);
+  const tenths = Math.sign(pctTotal) * Math.round(Math.abs(pctTotal) / 10);
+  return (tenths / 10 || 0).toFixed(1);
 }
 
 function AllProjectsTrend({ data, months, timelines, projectOptions, onPick }) {
@@ -1960,7 +1965,8 @@ function AllProjectsTrend({ data, months, timelines, projectOptions, onPick }) {
         <tbody>
           {rows.map(({ p, cols }) => {
             const firstCol = cols.find((c) => c.anyData);
-            const delta = firstCol ? (last({ cols }) - firstCol.total) / 100 : 0;
+            const deltaPct = firstCol ? last({ cols }) - firstCol.total : 0;
+            const delta = deltaPct / 100;
             return (
               <tr key={p.id} className={p.archived ? "ct-trend-row-retired" : undefined}>
                 <td className="ct-trend-td-name" title={p.name}>
@@ -1983,7 +1989,7 @@ function AllProjectsTrend({ data, months, timelines, projectOptions, onPick }) {
                   );
                 })}
                 <td className="ct-trend-cell ct-trend-delta" style={{ color: delta > 0 ? "var(--c-teal)" : delta < 0 ? "var(--c-danger)" : "var(--ink-soft)" }}>
-                  {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+                  {deltaPct > 0 ? `+${formatFTE(deltaPct)}` : formatFTE(deltaPct)}
                 </td>
               </tr>
             );
