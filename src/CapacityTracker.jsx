@@ -70,7 +70,23 @@ function heatStyle(value) {
   return { background: `rgb(${r},${g},${b})`, color: "#15181D" };
 }
 
+// Initials shown in each person's avatar on the dashboard. Anyone not
+// listed here falls back to the first letters of their name.
+const MEMBER_INITIALS = {
+  Dusko: "DM",
+  Paul: "PB",
+  Sandy: "SL",
+  Diego: "DR",
+  Shelly: "SH",
+  Kim: "KG",
+  Brent: "BF",
+  Carmen: "CS",
+  Bhaskar: "BS",
+};
+
 function initialsFor(name) {
+  const known = MEMBER_INITIALS[name.trim()];
+  if (known) return known;
   const parts = name.trim().split(/\s+/);
   const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : name.trim().slice(0, 2);
   return letters.toUpperCase();
