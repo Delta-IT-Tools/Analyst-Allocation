@@ -546,98 +546,126 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+const FORM_FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />`;
+
 const FORM_STYLES = `
   :root {
-    --bg: #ECEEE7;
+    --bg: #F6F4EF;
     --surface: #FFFFFF;
-    --ink: #1B2320;
-    --ink-soft: #58635C;
-    --line: #D9DCD1;
-    --teal: #1F6F63;
-    --teal-dark: #185349;
-    --amber: #B9791F;
-    --danger: #C1443C;
-    --header: #334249;
+    --ink: #15181D;
+    --ink-soft: #6B6760;
+    --line: #E4E0D8;
+    --teal: #1F6B5C;
+    --teal-dark: #15493F;
+    --amber: #96600F;
+    --danger: #B03A2E;
+    --header: #14171C;
     color-scheme: light;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+    font-variant-numeric: tabular-nums;
     color: var(--ink);
-    background: linear-gradient(180deg, #9AC6E2 0%, #DCEBF7 260px, var(--bg) 520px);
+    background: var(--bg);
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 560px; margin: 0 auto; padding: 28px 16px 140px; }
-  .org { font-size: 13px; color: #263138; margin: 0 0 18px; }
+  .band { background: var(--header); color: #F3F1EC; padding: 22px 16px 64px; }
+  .band-inner { max-width: 600px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+  .mark { width: 34px; height: 34px; border-radius: 10px; background: var(--teal); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .org { margin: 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #A9A49A; }
+  .wrap { max-width: 600px; margin: -44px auto 0; padding: 0 16px 140px; }
   .card {
     background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 22px 20px;
+    border-radius: 18px;
+    padding: 26px 22px;
+    box-shadow: 0 1px 2px rgba(20,23,28,0.04), 0 12px 40px rgba(20,23,28,0.08);
   }
-  h1 {
-    font-family: "Space Grotesk", "IBM Plex Sans", -apple-system, sans-serif;
-    font-size: 24px; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 6px;
-  }
+  h1 { font-family: "Fraunces", Georgia, serif; font-weight: 500; font-size: 26px; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 8px; }
   .sub { font-size: 14px; color: var(--ink-soft); margin: 0 0 4px; line-height: 1.5; }
-  .request { font-size: 13px; color: var(--amber); margin: 8px 0 0; }
+  .chips-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px; background: #F0EDE7; color: var(--ink-soft); }
+  .pill.warn { background: #FBF0DC; color: #7A4C0A; }
 
-  .meter { margin: 22px 0 6px; }
-  .bar {
-    display: flex; height: 22px; border-radius: 6px; overflow: hidden;
-    background: repeating-linear-gradient(135deg, #F3F4EF 0 6px, #E8EAE2 6px 12px);
-    border: 1px solid var(--line);
-  }
-  .bar span { display: block; height: 100%; transition: flex-basis 160ms ease; }
-  .bar.over { outline: 2px solid var(--danger); outline-offset: 1px; }
-  .meter-text { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; font-size: 13px; color: var(--ink-soft); }
-  .total { font-size: 20px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
-  .total.over { color: var(--danger); }
+  .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 24px; }
+  .state { font-size: 13px; font-weight: 500; }
+  .state.ok { color: var(--teal); }
+  .state.under { color: var(--amber); }
+  .state.over { color: var(--danger); }
+  .total { font-family: "Fraunces", Georgia, serif; font-size: 34px; font-weight: 500; line-height: 1; color: var(--ink); }
+  .bar { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; background: #F0EDE7; margin-top: 12px; }
+  .bar span { display: block; height: 100%; transition: width 160ms ease; }
+  .bar.over { outline: 2px solid var(--danger); outline-offset: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend b { font-weight: 600; }
+  .legend .gap { color: var(--ink-soft); }
 
-  ul { list-style: none; margin: 18px 0 0; padding: 0; }
-  li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EA; }
-  li:first-child { border-top: none; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .pname { flex: 1; font-size: 14.5px; line-height: 1.35; min-width: 0; }
-  li.zero .pname { color: var(--ink-soft); }
-  .stepper { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
-  .stepper button {
-    width: 34px; height: 36px; border: none; background: #F6F7F3; color: var(--ink);
-    font-size: 17px; cursor: pointer; font-family: inherit;
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 28px; padding: 0 2px 8px; border-bottom: 1px solid var(--line); }
+  h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  h2 span { font-weight: 400; color: var(--ink-soft); }
+  .hint { font-size: 12px; color: var(--ink-soft); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: grid; grid-template-columns: minmax(0, 1fr) 92px 40px; align-items: center; gap: 12px; min-height: 60px; padding: 0 4px 0 6px; border-bottom: 1px solid #F2EFEA; border-radius: 8px; }
+  li:focus-within { background: #FAF8F4; }
+  .pcell { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .pname { display: block; font-size: 15px; font-weight: 500; line-height: 1.3; }
+  .pgroup { display: block; font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  .box { display: flex; align-items: center; justify-content: center; gap: 2px; height: 44px; border-radius: 10px; cursor: text; }
+  .box.empty { border: 1px solid var(--line); background: var(--surface); }
+  .box:focus-within { outline: 2px solid var(--teal); outline-offset: 2px; }
+  .box input {
+    width: 42px; border: none; background: transparent; color: inherit; padding: 0;
+    font: inherit; font-size: 16px; font-weight: 600; text-align: right;
+    -moz-appearance: textfield; appearance: textfield;
   }
-  .stepper button:hover { background: #ECEEE7; }
-  .stepper input {
-    width: 52px; height: 36px; border: none; border-left: 1px solid var(--line); border-right: 1px solid var(--line);
-    text-align: right; padding: 0 16px 0 4px; font-size: 15px; font-family: inherit; color: var(--ink);
-    font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield;
-  }
-  .stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-  .pct { position: relative; }
-  .pct::after { content: "%"; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--ink-soft); pointer-events: none; }
+  .box input:focus { outline: none; }
+  .box input::placeholder { color: #B5B0A6; font-weight: 400; }
+  .box input::-webkit-outer-spin-button, .box input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .box .pc { font-size: 13px; opacity: 0.8; }
+  .remove { width: 40px; height: 40px; border: none; background: transparent; color: var(--ink-soft); border-radius: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .remove:hover { background: #F4F1EB; color: var(--danger); }
+  .empty-note { font-size: 14px; color: var(--ink-soft); margin: 16px 4px; }
+
+  .add { margin-top: 24px; padding: 18px; border-radius: 14px; background: #FAF8F4; }
+  .add h2 { margin-bottom: 3px; }
+  .add .hint { margin: 0 0 12px; font-size: 12.5px; }
+  .groups { display: flex; flex-direction: column; gap: 10px; }
+  .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .glabel { width: 100%; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  .chip { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 13px 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; }
+  .chip:hover { border-color: var(--teal); }
+  .chip svg { color: var(--ink-soft); }
 
   .footer {
     position: fixed; left: 0; right: 0; bottom: 0;
     background: var(--header); color: #fff;
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
   }
-  .footer-inner { max-width: 560px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
-  .status { flex: 1; font-size: 13.5px; line-height: 1.4; color: #D6E2E7; }
-  .status.ok { color: #A8E0CF; }
-  .status.err { color: #FFB9B3; }
+  .footer-inner { max-width: 600px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+  .status { flex: 1; font-size: 13.5px; line-height: 1.4; color: #CFCAC0; }
+  .status.ok { color: #9FD6C4; }
+  .status.err { color: #FFB9AE; }
   .save {
-    background: var(--teal); color: #fff; border: none; border-radius: 8px;
-    padding: 11px 18px; font-size: 14.5px; font-weight: 600; font-family: inherit; cursor: pointer; flex-shrink: 0;
+    background: #F3F1EC; color: var(--header); border: none; border-radius: 10px;
+    min-height: 44px; padding: 0 20px; font-size: 14.5px; font-weight: 600; font-family: inherit; cursor: pointer; flex-shrink: 0;
   }
-  .save:hover:not(:disabled) { background: var(--teal-dark); }
-  .save:disabled { background: #5A6A70; color: #C9D3D6; cursor: not-allowed; }
-  .note { font-size: 12.5px; color: var(--ink-soft); margin: 16px 4px 0; line-height: 1.5; }
+  .save:hover:not(:disabled) { background: #FFFFFF; }
+  .save:disabled { background: #3A3F47; color: #8E8A82; cursor: not-allowed; }
+  .note { font-size: 12.5px; color: var(--ink-soft); margin: 16px 6px 0; line-height: 1.5; }
 
-  button:focus-visible, input:focus-visible { outline: 2px solid #4D9BC7; outline-offset: 2px; }
+  button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  .footer button:focus-visible { outline-color: #7FB8A9; }
   @media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
-  @media (max-width: 380px) { .stepper button { width: 30px; } .stepper input { width: 46px; } }
+  @media (max-width: 380px) { li { grid-template-columns: minmax(0, 1fr) 84px 36px; gap: 8px; } }
 `;
+
+const FORM_MARK = `<span class="mark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4-5"/></svg></span>`;
 
 function formMessagePage(title, message, status) {
   return htmlResponse(
@@ -647,11 +675,12 @@ function formMessagePage(title, message, status) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(title)}</title>
+  ${FORM_FONTS}
   <style>${FORM_STYLES}</style>
 </head>
 <body>
+  <header class="band"><div class="band-inner">${FORM_MARK}<p class="org">Delta IT · Resource &amp; Project Allocation</p></div></header>
   <main class="wrap">
-    <p class="org">DELTA IT Resource and Project Allocation</p>
     <div class="card">
       <h1>${escapeHtml(title)}</h1>
       <p class="sub">${escapeHtml(message)}</p>
@@ -671,26 +700,39 @@ function formPageHtml(payload) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Update your allocation</title>
+  ${FORM_FONTS}
   <style>${FORM_STYLES}</style>
 </head>
 <body>
+  <header class="band"><div class="band-inner">${FORM_MARK}<p class="org">Delta IT · Resource &amp; Project Allocation</p></div></header>
   <main class="wrap">
-    <p class="org">DELTA IT Resource and Project Allocation</p>
     <div class="card">
       <h1 id="title"></h1>
-      <p class="sub">Set roughly how your time splits across projects right now. Leave anything you're not working on at 0.</p>
-      <p class="sub" id="last"></p>
-      <p class="request" id="request" hidden></p>
-
-      <div class="meter" aria-hidden="true">
-        <div class="bar" id="bar"></div>
+      <p class="sub">Set roughly how your time splits across projects right now.</p>
+      <div class="chips-row">
+        <span class="pill" id="last"></span>
+        <span class="pill warn" id="request" hidden></span>
       </div>
-      <div class="meter-text">
-        <span id="meter-note"></span>
+
+      <div class="head">
+        <span class="state" id="state"></span>
         <span class="total" id="total" aria-live="polite"></span>
       </div>
+      <div class="bar" id="bar" aria-hidden="true"></div>
+      <div class="legend" id="legend"></div>
 
+      <div class="list-head">
+        <h2>Your projects <span id="count"></span></h2>
+        <span class="hint">Tap a number to change it</span>
+      </div>
       <ul id="list"></ul>
+      <p class="empty-note" id="empty" hidden>Nothing assigned yet. Add a project below to start.</p>
+
+      <div class="add" id="add">
+        <h2>Add a project</h2>
+        <p class="hint">Tap a project to add it at 5%, then change the number.</p>
+        <div class="groups" id="groups"></div>
+      </div>
     </div>
     <p class="note">This link is just for you. Anyone who has it can change your allocation, so please don't forward it.</p>
   </main>
@@ -706,9 +748,33 @@ function formPageHtml(payload) {
 (function () {
   var data = ${json};
   var values = {};
-  data.projects.forEach(function (p) { values[p.id] = p.value; });
+  var byId = {};
+  data.projects.forEach(function (p) { values[p.id] = p.value; byId[p.id] = p; });
+  // Projects shown in "Your projects": the ones with time, in the order the
+  // page opened with. Added projects go at the end and stay until removed.
+  var shown = data.projects.filter(function (p) { return p.value > 0; }).map(function (p) { return p.id; });
   var dirty = false;
   var saving = false;
+
+  // Same grouping as the board: "BN – Barrett Integration" is in group "BN".
+  function groupKey(name) {
+    var m = name.match(/^(.*?)\\s+[\\u2013\\u2014-]\\s+/);
+    return (m ? m[1] : name).trim();
+  }
+  var groupCounts = {};
+  data.projects.forEach(function (p) { var k = groupKey(p.name); groupCounts[k] = (groupCounts[k] || 0) + 1; });
+  function groupOf(p) { var k = groupKey(p.name); return groupCounts[k] > 1 ? k : ""; }
+  function shortName(p) {
+    return groupOf(p) ? (p.name.replace(/^(.*?)\\s+[\\u2013\\u2014-]\\s+/, "").trim() || p.name) : p.name;
+  }
+
+  function heat(v) {
+    if (!v) return null;
+    if (v >= 70) return { bg: "rgb(31,107,92)", fg: "#FFFFFF" };
+    var a = v <= 10 ? 0.1 : v <= 25 ? 0.2 : v <= 45 ? 0.32 : 0.46;
+    var c = [31, 107, 92].map(function (x) { return Math.round(x * a + 255 * (1 - a)); });
+    return { bg: "rgb(" + c.join(",") + ")", fg: "#15181D" };
+  }
 
   function fmt(iso) {
     if (!iso) return "";
@@ -716,88 +782,29 @@ function formPageHtml(payload) {
     return parts[1] + "/" + parts[2] + "/" + parts[0].slice(2);
   }
 
-  document.getElementById("title").textContent = "Hi " + data.name + ", update your allocation";
-  document.getElementById("last").textContent = data.lastUpdated
-    ? "Last updated " + fmt(data.lastUpdated) + "."
-    : "You haven't submitted an allocation yet.";
-  if (data.lastRequested && (!data.lastUpdated || data.lastRequested > data.lastUpdated)) {
-    var req = document.getElementById("request");
-    req.textContent = "An update was requested from you on " + fmt(data.lastRequested) + ".";
-    req.hidden = false;
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function svg(path, size) {
+    var s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    s.setAttribute("width", size); s.setAttribute("height", size); s.setAttribute("viewBox", "0 0 24 24");
+    s.setAttribute("fill", "none"); s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "2");
+    s.setAttribute("stroke-linecap", "round"); s.setAttribute("aria-hidden", "true");
+    var p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", path); s.appendChild(p);
+    return s;
   }
 
-  var list = document.getElementById("list");
-  var bar = document.getElementById("bar");
-  var inputs = {};
-
-  data.projects.forEach(function (p) {
-    var li = document.createElement("li");
-    li.id = "row-" + p.id;
-
-    var dot = document.createElement("span");
-    dot.className = "dot";
-    dot.style.background = p.color;
-
-    var name = document.createElement("label");
-    name.className = "pname";
-    name.textContent = p.name;
-    name.htmlFor = "in-" + p.id;
-
-    var stepper = document.createElement("div");
-    stepper.className = "stepper";
-
-    var minus = document.createElement("button");
-    minus.type = "button";
-    minus.textContent = "\\u2212";
-    minus.setAttribute("aria-label", "Decrease " + p.name + " by 5");
-    minus.addEventListener("click", function () { setValue(p.id, values[p.id] - 5); });
-
-    var wrap = document.createElement("span");
-    wrap.className = "pct";
-    var input = document.createElement("input");
-    input.type = "number";
-    input.inputMode = "numeric";
-    input.min = "0";
-    input.max = "100";
-    input.step = "1";
-    input.id = "in-" + p.id;
-    input.value = String(p.value);
-    input.addEventListener("input", function () {
-      var n = parseInt(input.value, 10);
-      values[p.id] = isNaN(n) ? 0 : Math.max(0, Math.min(100, n));
-      dirty = true;
-      render(false);
-    });
-    input.addEventListener("blur", function () { input.value = String(values[p.id]); });
-    input.addEventListener("focus", function () { input.select(); });
-    wrap.appendChild(input);
-    inputs[p.id] = input;
-
-    var plus = document.createElement("button");
-    plus.type = "button";
-    plus.textContent = "+";
-    plus.setAttribute("aria-label", "Increase " + p.name + " by 5");
-    plus.addEventListener("click", function () { setValue(p.id, values[p.id] + 5); });
-
-    stepper.appendChild(minus);
-    stepper.appendChild(wrap);
-    stepper.appendChild(plus);
-    li.appendChild(dot);
-    li.appendChild(name);
-    li.appendChild(stepper);
-    list.appendChild(li);
-
-    var seg = document.createElement("span");
-    seg.id = "seg-" + p.id;
-    seg.style.background = p.color;
-    bar.appendChild(seg);
-  });
-
-  function setValue(id, v) {
-    values[id] = Math.max(0, Math.min(100, Math.round(v)));
-    inputs[id].value = String(values[id]);
-    dirty = true;
-    render(false);
+  document.getElementById("title").textContent = "Hi " + data.name + ", update your allocation";
+  document.getElementById("last").textContent = data.lastUpdated
+    ? "Last updated " + fmt(data.lastUpdated)
+    : "No allocation submitted yet";
+  if (data.lastRequested && (!data.lastUpdated || data.lastRequested > data.lastUpdated)) {
+    var req = document.getElementById("request");
+    req.textContent = "Update requested " + fmt(data.lastRequested);
+    req.hidden = false;
   }
 
   function totalNow() {
@@ -807,26 +814,144 @@ function formPageHtml(payload) {
   }
 
   function setStatus(text, kind) {
-    var el = document.getElementById("status");
-    el.textContent = text;
-    el.className = "status" + (kind ? " " + kind : "");
+    var s = document.getElementById("status");
+    s.textContent = text;
+    s.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function paintBox(box, v) {
+    var h = heat(v);
+    box.className = h ? "box" : "box empty";
+    box.style.background = h ? h.bg : "";
+    box.style.color = h ? h.fg : "";
+  }
+
+  // Rebuilds the list and the add-chips. Only called when rows are added or
+  // removed, never while someone is typing, so focus isn't lost.
+  function buildRows() {
+    var list = document.getElementById("list");
+    list.textContent = "";
+    shown.forEach(function (id) {
+      var p = byId[id];
+      var li = el("li");
+      var cell = el("div", "pcell");
+      var dot = el("span", "dot"); dot.style.background = p.color;
+      var names = el("div");
+      var nm = el("label", "pname", shortName(p)); nm.htmlFor = "in-" + p.id;
+      names.appendChild(nm);
+      if (groupOf(p)) names.appendChild(el("span", "pgroup", groupOf(p)));
+      cell.appendChild(dot); cell.appendChild(names);
+
+      var box = el("label", "box");
+      var input = document.createElement("input");
+      input.type = "number"; input.inputMode = "numeric"; input.min = "0"; input.max = "100"; input.step = "1";
+      input.id = "in-" + p.id; input.placeholder = "0";
+      input.value = values[p.id] ? String(values[p.id]) : "";
+      input.setAttribute("aria-label", p.name + " allocation percent");
+      input.addEventListener("focus", function () { input.select(); });
+      input.addEventListener("input", function () {
+        var n = parseInt(input.value, 10);
+        values[p.id] = isNaN(n) ? 0 : Math.max(0, Math.min(100, n));
+        dirty = true;
+        paintBox(box, values[p.id]);
+        render(false);
+      });
+      input.addEventListener("blur", function () { input.value = values[p.id] ? String(values[p.id]) : ""; });
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") input.blur(); });
+      box.appendChild(input); box.appendChild(el("span", "pc", "%"));
+      paintBox(box, values[p.id]);
+
+      var rm = el("button", "remove");
+      rm.type = "button";
+      rm.setAttribute("aria-label", "Remove " + p.name);
+      rm.appendChild(svg("M6 6l12 12M18 6L6 18", 16));
+      rm.addEventListener("click", function () {
+        values[p.id] = 0;
+        shown = shown.filter(function (x) { return x !== p.id; });
+        dirty = true;
+        buildRows();
+        render(false);
+      });
+
+      li.appendChild(cell); li.appendChild(box); li.appendChild(rm);
+      list.appendChild(li);
+    });
+    document.getElementById("count").textContent = "(" + shown.length + ")";
+    document.getElementById("empty").hidden = shown.length > 0;
+
+    // Add-a-project chips, grouped by client; lone projects go under "Other".
+    var groups = document.getElementById("groups");
+    groups.textContent = "";
+    var order = [], buckets = {};
+    data.projects.forEach(function (p) {
+      if (shown.indexOf(p.id) !== -1) return;
+      var k = groupOf(p) || "Other";
+      if (!buckets[k]) { buckets[k] = []; if (k !== "Other") order.push(k); }
+      buckets[k].push(p);
+    });
+    if (buckets.Other) order.push("Other");
+    order.forEach(function (k) {
+      var g = el("div", "group");
+      g.appendChild(el("span", "glabel", k));
+      buckets[k].forEach(function (p) {
+        var chip = el("button", "chip");
+        chip.type = "button";
+        var d = el("span", "dot"); d.style.background = p.color;
+        chip.appendChild(d);
+        chip.appendChild(document.createTextNode(shortName(p)));
+        chip.appendChild(svg("M12 5v14M5 12h14", 12));
+        chip.setAttribute("aria-label", "Add " + p.name);
+        chip.addEventListener("click", function () {
+          values[p.id] = 5;
+          shown.push(p.id);
+          dirty = true;
+          buildRows();
+          render(false);
+          var inp = document.getElementById("in-" + p.id);
+          if (inp) inp.focus();
+        });
+        g.appendChild(chip);
+      });
+      groups.appendChild(g);
+    });
+    document.getElementById("add").hidden = order.length === 0;
   }
 
   function render(keepStatus) {
     var total = totalNow();
     var over = total > 100;
-    data.projects.forEach(function (p) {
-      var seg = document.getElementById("seg-" + p.id);
-      var share = over ? (values[p.id] / total) * 100 : values[p.id];
-      seg.style.flex = "0 0 " + share + "%";
-      document.getElementById("row-" + p.id).className = values[p.id] ? "" : "zero";
+    var scale = Math.max(100, total);
+
+    var bar = document.getElementById("bar");
+    var legend = document.getElementById("legend");
+    bar.textContent = ""; legend.textContent = "";
+    shown.forEach(function (id) {
+      var v = values[id];
+      if (!v) return;
+      var p = byId[id];
+      var seg = el("span"); seg.style.background = p.color; seg.style.width = (v / scale * 100) + "%";
+      bar.appendChild(seg);
+      var item = el("span");
+      var d = el("span", "dot"); d.style.background = p.color;
+      item.appendChild(d);
+      item.appendChild(document.createTextNode(shortName(p) + " "));
+      item.appendChild(el("b", null, v + "%"));
+      legend.appendChild(item);
     });
+    if (total < 100) {
+      var gap = el("span", "gap");
+      var gd = el("span", "dot"); gd.style.background = "#E4E0D8";
+      gap.appendChild(gd);
+      gap.appendChild(document.createTextNode("Unallocated "));
+      gap.appendChild(el("b", null, (100 - total) + "%"));
+      legend.appendChild(gap);
+    }
     bar.className = over ? "bar over" : "bar";
-    var totalEl = document.getElementById("total");
-    totalEl.textContent = total + "%";
-    totalEl.className = over ? "total over" : "total";
-    document.getElementById("meter-note").textContent =
-      over ? (total - 100) + "% over capacity" : total === 100 ? "Fully allocated" : (100 - total) + "% unallocated";
+
+    document.getElementById("total").textContent = total + "%";
+    var state = document.getElementById("state");
+    state.textContent = over ? (total - 100) + "% over capacity" : total === 100 ? "Fully allocated" : (100 - total) + "% unallocated";
+    state.className = "state " + (over ? "over" : total === 100 ? "ok" : "under");
 
     var btn = document.getElementById("save");
     btn.disabled = saving || over;
@@ -842,6 +967,7 @@ function formPageHtml(payload) {
   }
 
   document.getElementById("save").addEventListener("click", function () {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     if (saving || totalNow() > 100) return;
     saving = true;
     render(true);
@@ -859,7 +985,7 @@ function formPageHtml(payload) {
         if (r.ok) {
           dirty = false;
           data.lastUpdated = r.body.lastUpdated;
-          document.getElementById("last").textContent = "Last updated " + fmt(r.body.lastUpdated) + ".";
+          document.getElementById("last").textContent = "Last updated " + fmt(r.body.lastUpdated);
           document.getElementById("request").hidden = true;
           render(true);
           setStatus("Saved. Your allocation is on the team board.", "ok");
@@ -879,6 +1005,7 @@ function formPageHtml(payload) {
     if (dirty) { e.preventDefault(); e.returnValue = ""; }
   });
 
+  buildRows();
   render(false);
 })();
 </script>
