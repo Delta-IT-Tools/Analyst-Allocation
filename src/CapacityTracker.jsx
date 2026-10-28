@@ -1366,22 +1366,13 @@ export default function CapacityTracker() {
                 {activeProjects.length === 0 ? (
                   <p className="ct-hint">Add a project below to allocate time against it.</p>
                 ) : (
-                  <div className="ct-alloc-cards">
-                    {sortProjectsForResource(activeProjects, data.allocations[currentUser.id]).map((p) => {
-                      const val = (data.allocations[currentUser.id] || {})[p.id] || 0;
-                      return (
-                        <AllocCard
-                          key={p.id}
-                          project={p}
-                          value={val}
-                          onCommit={(num) => setAllocation(currentUser.id, p.id, num)}
-                        />
-                      );
-                    })}
-                  </div>
+                  <AllocEditor
+                    key={currentUser.id}
+                    projects={activeProjects}
+                    alloc={data.allocations[currentUser.id] || {}}
+                    onCommit={(projectId, num) => setAllocation(currentUser.id, projectId, num)}
+                  />
                 )}
-
-                <AllocMessage total={totalFor(currentUser.id)} />
               </div>
             )}
             {selectedProject && (
@@ -1657,47 +1648,197 @@ export default function CapacityTracker() {
   );
 }
 
-function AllocCard({ project, value, onCommit }) {
-  const [localValue, setLocalValue] = useState(String(value));
+// One analyst's allocation: a split bar of where their time goes, the
+// projects they are on (click a number to change it), and the rest of the
+// projects as chips to add. Row order is fixed when the editor opens, so
+// rows don't jump around while someone is typing; new rows go at the end.
+function AllocEditor({ projects, alloc, onCommit }) {
+  const valueOf = (id) => alloc[id] || 0;
+  const [order, setOrder] = useState(() =>
+    projects
+      .filter((p) => valueOf(p.id) > 0)
+      .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.name.localeCompare(b.name))
+      .map((p) => p.id)
+  );
+
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  // Pick up projects that gained time elsewhere (for example after a reload).
+  const extra = projects
+    .filter((p) => valueOf(p.id) > 0 && !order.includes(p.id))
+    .sort((a, b) => valueOf(b.id) - valueOf(a.id))
+    .map((p) => p.id);
+  const shownIds = [...order, ...extra].filter((id) => byId.has(id));
+  const rows = shownIds.map((id) => byId.get(id));
+
+  const groups = groupProjects(projects);
+  const groupInfo = new Map();
+  groups.forEach((g) => g.projects.forEach((p) => groupInfo.set(p.id, g.multi ? g.key : "")));
+  const shortName = (p) => (groupInfo.get(p.id) ? stripGroupPrefix(p.name) : p.name);
+
+  const total = projects.reduce((sum, p) => sum + valueOf(p.id), 0);
+  const scale = Math.max(100, total);
+  const segments = rows.filter((p) => valueOf(p.id) > 0);
+
+  const available = [];
+  const singles = [];
+  groups.forEach((g) => {
+    const items = g.projects.filter((p) => !shownIds.includes(p.id));
+    if (items.length === 0) return;
+    if (g.multi) available.push({ key: g.key, items });
+    else singles.push(...items);
+  });
+  if (singles.length) available.push({ key: "Other", items: singles });
+
+  function addProject(id) {
+    setOrder((o) => [...o.filter((x) => x !== id), id]);
+    onCommit(id, 5);
+  }
+  function removeProject(id) {
+    setOrder((o) => o.filter((x) => x !== id));
+    if (valueOf(id) !== 0) onCommit(id, 0);
+  }
+  function commitValue(id, num) {
+    // Keep a row on screen even if it's set to 0, until it's removed.
+    setOrder((o) => (o.includes(id) ? o : [...o, id]));
+    onCommit(id, num);
+  }
+
+  let status = { text: "Fully allocated", cls: "ct-ae-status-ok" };
+  if (total > 100) status = { text: `${total - 100}% over capacity — trim an allocation`, cls: "ct-ae-status-over" };
+  else if (total < 100) status = { text: `${100 - total}% unallocated`, cls: "ct-ae-status-under" };
+
+  return (
+    <div className="ct-ae">
+      <div className={`ct-ae-status ${status.cls}`}>
+        {total > 100 ? <AlertTriangle size={14} /> : total === 100 ? <Check size={14} /> : null} {status.text}
+      </div>
+
+      <div
+        className="ct-ae-bar"
+        role="img"
+        aria-label={`Allocation split: ${segments.map((p) => `${p.name} ${valueOf(p.id)}%`).join(", ") || "nothing allocated"}`}
+      >
+        {segments.map((p) => (
+          <span key={p.id} style={{ width: `${(valueOf(p.id) / scale) * 100}%`, background: p.color }} />
+        ))}
+      </div>
+      <div className="ct-ae-legend">
+        {segments.map((p) => (
+          <span key={p.id} className="ct-ae-legend-item">
+            <span className="ct-dot" style={{ background: p.color }} />
+            {shortName(p)} <b>{valueOf(p.id)}%</b>
+          </span>
+        ))}
+        {total < 100 && (
+          <span className="ct-ae-legend-item ct-ae-legend-gap">
+            <span className="ct-dot" style={{ background: "var(--line)" }} />
+            Unallocated <b>{100 - total}%</b>
+          </span>
+        )}
+      </div>
+
+      <div className="ct-ae-list">
+        <div className="ct-ae-list-head">
+          <h4>
+            Assigned projects <span>({rows.length})</span>
+          </h4>
+          <span className="ct-ae-hint">Click a number to change it</span>
+        </div>
+        {rows.length === 0 && <p className="ct-hint ct-ae-empty">Nothing assigned yet. Add a project below to start.</p>}
+        {rows.map((p) => {
+          const group = groupInfo.get(p.id);
+          return (
+            <div key={p.id} className="ct-ae-row">
+              <div className="ct-ae-name-cell">
+                <span className="ct-dot" style={{ background: p.color }} />
+                <div className="ct-ae-name-text">
+                  <div className="ct-ae-name" title={p.name}>{shortName(p)}</div>
+                  {group && <div className="ct-ae-group">{group}</div>}
+                </div>
+              </div>
+              <PercentInput label={p.name} value={valueOf(p.id)} onCommit={(num) => commitValue(p.id, num)} />
+              <button type="button" className="ct-ae-remove" onClick={() => removeProject(p.id)} aria-label={`Remove ${p.name}`} title="Remove from this person">
+                <X size={16} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {available.length > 0 && (
+        <div className="ct-ae-add">
+          <h4>Add a project</h4>
+          <p className="ct-hint">Click a project to assign it at 5%, then change the number.</p>
+          <div className="ct-ae-add-groups">
+            {available.map((g) => (
+              <div key={g.key} className="ct-ae-add-group">
+                <span className="ct-ae-add-label">{g.key}</span>
+                {g.items.map((p) => (
+                  <button key={p.id} type="button" className="ct-ae-chip" onClick={() => addProject(p.id)} title={`Assign ${p.name}`}>
+                    <span className="ct-dot" style={{ background: p.color }} />
+                    {shortName(p)}
+                    <Plus size={12} />
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A percentage box: empty instead of "0", selects its number on click so
+// typing replaces it, and saves on Enter or when focus leaves.
+function PercentInput({ label, value, onCommit }) {
+  const toText = (v) => (v ? String(v) : "");
+  const [text, setText] = useState(toText(value));
+  const cancelled = useRef(false);
 
   useEffect(() => {
-    setLocalValue(String(value));
+    setText(toText(value));
   }, [value]);
 
   function commit() {
-    const num = Number(localValue);
-    if (!Number.isNaN(num)) {
-      onCommit(num);
-    } else {
-      setLocalValue(String(value));
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
     }
+    const trimmed = text.trim();
+    const num = trimmed === "" ? 0 : Number(trimmed);
+    if (Number.isNaN(num)) {
+      setText(toText(value));
+      return;
+    }
+    if (num !== value) onCommit(num);
+    else setText(toText(value));
   }
 
   return (
-    <div className="ct-alloc-card">
-      <div className="ct-alloc-card-top">
-        <span className="ct-dot" style={{ background: project.color }} />
-        <span className="ct-alloc-card-name" title={project.name}>{project.name}</span>
-      </div>
-      <div className="ct-alloc-card-bottom">
-        <div className="ct-alloc-card-input">
-          <input
-            type="number"
-            min={0}
-            max={100}
-            value={localValue}
-            onChange={(e) => setLocalValue(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.currentTarget.blur();
-              }
-            }}
-          />
-          <span>%</span>
-        </div>
-      </div>
-    </div>
+    <label className="ct-ae-input" style={heatStyle(value)} data-empty={value ? undefined : "true"}>
+      <input
+        type="number"
+        min={0}
+        max={100}
+        inputMode="numeric"
+        placeholder="0"
+        value={text}
+        aria-label={`${label} allocation percent`}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            cancelled.current = true;
+            setText(toText(value));
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      <span>%</span>
+    </label>
   );
 }
 
@@ -1748,20 +1889,6 @@ function NetworkDiagram() {
       <line x1="440" y1="228" x2="476" y2="228" stroke="#FFFFFF" strokeWidth="1" markerStart="url(#ndArrow)" markerEnd="url(#ndArrow)" />
     </svg>
   );
-}
-
-function AllocMessage({ total }) {
-  if (total > 100) {
-    return (
-      <div className="ct-msg ct-msg-danger">
-        <AlertTriangle size={14} /> {total - 100}% over capacity — trim an allocation.
-      </div>
-    );
-  }
-  if (total === 100) {
-    return <div className="ct-msg ct-msg-ok">Fully allocated.</div>;
-  }
-  return <div className="ct-msg ct-msg-muted">{100 - total}% unallocated.</div>;
 }
 
 function ProjectsManager({ data, addProject, retireProject, reactivateProject, projectTotal, recolorProjectsByGroup, formatDate }) {
@@ -2625,25 +2752,16 @@ function SelfServeForm({
             {activeProjects.length === 0 ? (
               <p className="ct-hint">No projects have been added yet.</p>
             ) : (
-              <div className="ct-alloc-cards">
-                {sortProjectsForResource(activeProjects, data.allocations[user.id]).map((p) => {
-                  const val = (data.allocations[user.id] || {})[p.id] || 0;
-                  return (
-                    <AllocCard
-                      key={p.id}
-                      project={p}
-                      value={val}
-                      onCommit={(num) => {
-                        setAllocation(user.id, p.id, num);
-                        setSubmitted(false);
-                      }}
-                    />
-                  );
-                })}
-              </div>
+              <AllocEditor
+                key={user.id}
+                projects={activeProjects}
+                alloc={data.allocations[user.id] || {}}
+                onCommit={(projectId, num) => {
+                  setAllocation(user.id, projectId, num);
+                  setSubmitted(false);
+                }}
+              />
             )}
-
-            <AllocMessage total={totalFor(user.id)} />
 
             <div className="ct-selfserve-submitrow">
               <button
@@ -3204,6 +3322,57 @@ function Style() {
       .ct-alert { background: #F7E6DF; color: #8E3519; border: none; border-radius: 14px; }
       .ct-panel.ct-alert-panel { padding: 0; background: none; box-shadow: none; }
       .ct-diagram-visual { background: #14171C; }
+
+      /* ---- Analyst allocation editor ---- */
+      .ct-editor-head { align-items: center; margin-bottom: 10px; }
+      .ct-editor-head h3 { font-family: "Fraunces", Georgia, serif; font-weight: 500; font-size: 20px; }
+      .ct-editor-head .ct-total { font-family: "Fraunces", Georgia, serif; font-weight: 500; font-size: 28px; color: var(--ink) !important; }
+      .ct-ae { margin-top: 14px; }
+      .ct-ae-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; margin-bottom: 10px; }
+      .ct-ae-status-ok { color: var(--c-teal); }
+      .ct-ae-status-under { color: var(--c-amber); }
+      .ct-ae-status-over { color: var(--c-danger); }
+      .ct-ae-bar { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; background: #F0EDE7; }
+      .ct-ae-bar span { display: block; height: 100%; }
+      .ct-ae-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 10px; font-size: 13px; }
+      .ct-ae-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+      .ct-ae-legend-item b { font-weight: 600; }
+      .ct-ae-legend-gap { color: var(--ink-soft); }
+      .ct-ae-list { margin-top: 24px; }
+      .ct-ae-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 2px 8px; border-bottom: 1px solid var(--line); }
+      .ct-ae-list-head h4, .ct-ae-add h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
+      .ct-ae-list-head h4 span { font-weight: 400; color: var(--ink-soft); }
+      .ct-ae-hint { font-size: 12px; color: var(--ink-soft); }
+      .ct-ae-empty { margin: 14px 2px; }
+      .ct-ae-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 40px; align-items: center; gap: 14px; min-height: 58px; padding: 0 2px; border-bottom: 1px solid #F2EFEA; }
+      .ct-ae-name-cell { display: flex; align-items: center; gap: 11px; min-width: 0; }
+      .ct-ae-name-text { min-width: 0; }
+      .ct-ae-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .ct-ae-group { font-size: 11.5px; color: var(--ink-soft); margin-top: 1px; }
+      .ct-ae-input { display: flex; align-items: center; justify-content: center; gap: 2px; height: 40px; border-radius: 10px; cursor: text; }
+      .ct-ae-input[data-empty="true"] { border: 1px solid var(--line); background: var(--surface); }
+      .ct-ae-input:focus-within { outline: 2px solid var(--c-teal); outline-offset: 2px; }
+      .ct-ae-input input { width: 42px; border: none; background: transparent; color: inherit; font: inherit; font-size: 15px; font-weight: 600; text-align: right; padding: 0; }
+      .ct-ae-input input:focus { outline: none; }
+      .ct-ae-input input::placeholder { color: #B5B0A6; font-weight: 400; }
+      .ct-ae-input input::-webkit-outer-spin-button, .ct-ae-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .ct-ae-input input[type=number] { -moz-appearance: textfield; }
+      .ct-ae-input span { font-size: 12.5px; opacity: 0.8; }
+      .ct-ae-remove { width: 40px; height: 40px; border: none; background: transparent; color: var(--ink-soft); border-radius: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+      .ct-ae-remove:hover { background: #F4F1EB; color: var(--c-danger); }
+      .ct-ae-remove:focus-visible { outline: 2px solid var(--c-teal); }
+      .ct-ae-add { margin-top: 22px; padding: 18px 20px; border-radius: 14px; background: #FAF8F4; }
+      .ct-ae-add .ct-hint { margin: 3px 0 12px; font-size: 12.5px; }
+      .ct-ae-add-groups { display: flex; flex-direction: column; gap: 10px; }
+      .ct-ae-add-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .ct-ae-add-label { width: 72px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+      .ct-ae-chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+      .ct-ae-chip svg { color: var(--ink-soft); }
+      .ct-ae-chip:hover { border-color: var(--c-teal); }
+      .ct-ae-chip:focus-visible { outline: 2px solid var(--c-teal); outline-offset: 1px; }
+      @media (max-width: 560px) {
+        .ct-ae-add-label { width: 100%; }
+      }
       @media (max-width: 480px) {
         .ct-slider-row { grid-template-columns: 8px 80px 1fr 40px 10px; }
         .ct-member-row { grid-template-columns: 90px 1fr 44px 18px; }
