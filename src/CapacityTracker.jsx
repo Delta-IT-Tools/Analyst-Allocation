@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil, Link2, Network } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Gauge, Bell, History, FolderCog, Palette, TrendingUp, Pencil, Link2, Network, MoreHorizontal, Download, Upload, Archive } from "lucide-react";
 import InterfacesView from "./InterfacesView.jsx";
 
 const PALETTE = [
@@ -32,6 +32,48 @@ function clamp(n, lo, hi) {
 function getProjectGroupKey(name) {
   const match = name.match(/^(.*?)\s+[–—-]\s+/);
   return (match ? match[1] : name).trim();
+}
+
+// The part of a grouped project's name after the group prefix
+// ("BN – Barrett Integration" -> "Barrett Integration").
+function stripGroupPrefix(name) {
+  return name.replace(/^(.*?)\s+[–—-]\s+/, "").trim() || name;
+}
+
+// Splits projects into their name-prefix groups, keeping first-seen order.
+// Groups with several projects get a heading on the dashboard; a project
+// that is alone in its group is shown on its own with its full name.
+function groupProjects(projects) {
+  const groups = [];
+  const byKey = new Map();
+  projects.forEach((p) => {
+    const key = getProjectGroupKey(p.name);
+    if (!byKey.has(key)) {
+      const g = { key, color: p.color, projects: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    byKey.get(key).projects.push(p);
+  });
+  return groups.map((g) => ({ ...g, multi: g.projects.length > 1 }));
+}
+
+// Dashboard heatmap tint for an allocation %. Stepped rather than smooth so
+// the text on every step stays readable: dark text on the light steps,
+// white text on the solid 70%+ step.
+const HEAT_RGB = [31, 107, 92];
+function heatStyle(value) {
+  if (!value) return undefined;
+  if (value >= 70) return { background: `rgb(${HEAT_RGB.join(",")})`, color: "#FFFFFF" };
+  const a = value <= 10 ? 0.1 : value <= 25 ? 0.2 : value <= 45 ? 0.32 : 0.46;
+  const [r, g, b] = HEAT_RGB.map((c) => Math.round(c * a + 255 * (1 - a)));
+  return { background: `rgb(${r},${g},${b})`, color: "#15181D" };
+}
+
+function initialsFor(name) {
+  const parts = name.trim().split(/\s+/);
+  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : name.trim().slice(0, 2);
+  return letters.toUpperCase();
 }
 
 // Picks a color for a project name, reusing the color already assigned to
@@ -381,6 +423,25 @@ export default function CapacityTracker() {
   const [linksLoading, setLinksLoading] = useState(false);
   const [linksError, setLinksError] = useState("");
   const [linkNotice, setLinkNotice] = useState("");
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close the "More" menu on a click outside it or on Escape.
+  useEffect(() => {
+    if (!showMenu) return;
+    function onPointer(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") setShowMenu(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showMenu]);
 
   async function loadData() {
     setLoadError(false);
@@ -929,6 +990,8 @@ export default function CapacityTracker() {
   const selectedProject = activeProjects.find((p) => p.id === selectedProjectId);
   const sortedMembers = [...data.members].sort((a, b) => totalFor(b.id) - totalFor(a.id));
   const sortedProjects = [...activeProjects].sort((a, b) => projectTotal(b.id) - projectTotal(a.id));
+  const projectGroups = groupProjects(activeProjects);
+  const maxProjectTotal = Math.max(0, ...activeProjects.map((p) => projectTotal(p.id)));
   const staleMembers = data.members.filter((m) => isStale(m.lastUpdated));
   const missingSeedMembers = SEED_MEMBER_NAMES.filter((name) => !data.members.some((m) => m.name === name));
 
@@ -966,8 +1029,8 @@ export default function CapacityTracker() {
             <Gauge size={20} strokeWidth={2} />
           </div>
           <div>
-            <h1>DELTA IT Resource and Project Allocation</h1>
-            <p>Team allocation across projects</p>
+            <h1>Resource &amp; Project Allocation</h1>
+            <p>Delta IT · Team allocation across projects</p>
           </div>
         </div>
         <div className="ct-topbar-actions">
@@ -996,16 +1059,65 @@ export default function CapacityTracker() {
                 <button type="button" className="ct-btn ct-btn-icon" onClick={() => { setAddingMember(false); setNewMemberName(""); }}><X size={15} /></button>
               </div>
             ) : (
-              <button type="button" className="ct-link" onClick={() => setAddingMember(true)}>
-                + Teammate
+              <button type="button" className="ct-btn-add" onClick={() => setAddingMember(true)}>
+                <Plus size={15} strokeWidth={2.2} /> Add teammate
               </button>
             )}
-            <button type="button" className="ct-link" onClick={exportData} title="Download the current board as a JSON file you keep">
-              Export
-            </button>
-            <button type="button" className="ct-link" onClick={triggerImport} title="Restore the board from a previously exported JSON file">
-              Import
-            </button>
+            <div className="ct-menu" ref={menuRef}>
+              <button
+                type="button"
+                className="ct-menu-btn"
+                aria-label="More actions"
+                aria-haspopup="menu"
+                aria-expanded={showMenu}
+                onClick={() => setShowMenu((v) => !v)}
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {showMenu && (
+                <div className="ct-menu-pop" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={showLinks ? "ct-menu-item ct-menu-item-on" : "ct-menu-item"}
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowLinks((v) => !v);
+                      setLinkNotice("");
+                      if (!showLinks) loadLinks();
+                    }}
+                  >
+                    <Link2 size={15} /> Update links
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={showBackups ? "ct-menu-item ct-menu-item-on" : "ct-menu-item"}
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowBackups((v) => !v);
+                      if (!showBackups) loadBackupsList();
+                    }}
+                  >
+                    <History size={15} /> Backups
+                  </button>
+                  <button type="button" role="menuitem" className="ct-menu-item" onClick={() => { setShowMenu(false); createBackupNow(); }}>
+                    <Archive size={15} /> Create backup now
+                  </button>
+                  <div className="ct-menu-sep" role="separator" />
+                  <button type="button" role="menuitem" className="ct-menu-item" onClick={() => { setShowMenu(false); exportData(); }} title="Download the current board as a JSON file you keep">
+                    <Download size={15} /> Export board
+                  </button>
+                  <button type="button" role="menuitem" className="ct-menu-item" onClick={() => { setShowMenu(false); triggerImport(); }} title="Restore the board from a previously exported JSON file">
+                    <Upload size={15} /> Import board
+                  </button>
+                  <div className="ct-menu-sep" role="separator" />
+                  <button type="button" role="menuitem" className="ct-menu-item" onClick={() => { setShowMenu(false); setShowNetworkDiagram(true); }}>
+                    <Network size={15} /> Network diagram
+                  </button>
+                </div>
+              )}
+            </div>
             <input
               type="file"
               accept="application/json"
@@ -1057,34 +1169,6 @@ export default function CapacityTracker() {
               <Plus size={13} /> Restore team ({missingSeedMembers.length})
             </button>
           )}
-          <button
-            type="button"
-            className={showBackups ? "ct-util ct-util-on" : "ct-util"}
-            aria-expanded={showBackups}
-            onClick={() => {
-              setShowBackups((v) => !v);
-              if (!showBackups) loadBackupsList();
-            }}
-            title="See automatic recovery snapshots"
-          >
-            <History size={13} /> Backups
-          </button>
-          <button
-            type="button"
-            className={showLinks ? "ct-util ct-util-on" : "ct-util"}
-            aria-expanded={showLinks}
-            onClick={() => {
-              setShowLinks((v) => !v);
-              setLinkNotice("");
-              if (!showLinks) loadLinks();
-            }}
-            title="Personal links each analyst can use to update their own allocation"
-          >
-            <Link2 size={13} /> Update links
-          </button>
-          <button type="button" className="ct-util" onClick={createBackupNow} title="Save a recovery snapshot right now">
-            <Check size={13} /> Create backup
-          </button>
         </div>
       </nav>
 
@@ -1357,67 +1441,103 @@ export default function CapacityTracker() {
                 <thead>
                   <tr>
                     <th className="ct-th-name">Project</th>
-                    {sortedMembers.map((m) => (
-                      <th key={m.id} className={m.id === currentUserId ? "ct-th-proj ct-col-self" : "ct-th-proj"}>
-                        <div className="ct-th-proj-inner">
-                          <div className="ct-th-name-rotated">
-                            <span title={m.name}>
+                    {sortedMembers.map((m) => {
+                      const stale = isStale(m.lastUpdated);
+                      const pending = isRequestPending(m);
+                      return (
+                        <th key={m.id} className={m.id === currentUserId ? "ct-th-proj ct-col-self" : "ct-th-proj"}>
+                          <div className="ct-th-proj-inner">
+                            <span className="ct-avatar" aria-hidden="true">{initialsFor(m.name)}</span>
+                            <span className="ct-th-person" title={m.name}>
                               {m.name}
                               {m.id === currentUserId && <span className="ct-you-inline"> · you</span>}
                             </span>
-                          </div>
-                          <div className="ct-th-meta-row">
-                            <div className={isStale(m.lastUpdated) ? "ct-th-date ct-th-date-stale" : "ct-th-date"} title={isStale(m.lastUpdated) ? "Stale — over 30 days since last update" : "Last updated"}>
-                              {isStale(m.lastUpdated) && <AlertTriangle size={11} />} {formatDate(m.lastUpdated)}
+                            <div className="ct-th-meta-row">
+                              {stale ? (
+                                <span className="ct-stale-pill" title="Stale: over 30 days since last update">
+                                  <AlertTriangle size={11} /> {formatDate(m.lastUpdated)}
+                                </span>
+                              ) : (
+                                <span className="ct-th-date" title="Last updated">{formatDate(m.lastUpdated)}</span>
+                              )}
+                              <button
+                                type="button"
+                                className={pending ? "ct-req-bell ct-req-bell-active" : "ct-req-bell"}
+                                onClick={() => requestUpdate(m.id)}
+                                aria-label={`Log an update request for ${m.name}`}
+                                title={
+                                  pending
+                                    ? `Update requested ${formatDate(m.lastRequested)} — still waiting on them — click to log a new request`
+                                    : m.lastRequested
+                                    ? `Last requested ${formatDate(m.lastRequested)} — fulfilled — click to log a new request`
+                                    : "Never requested — click to log a request"
+                                }
+                              >
+                                <Bell size={12} />
+                              </button>
                             </div>
-                            <button
-                              type="button"
-                              className={isRequestPending(m) ? "ct-req-bell ct-req-bell-active" : "ct-req-bell"}
-                              onClick={() => requestUpdate(m.id)}
-                              title={
-                                isRequestPending(m)
-                                  ? `Update requested ${formatDate(m.lastRequested)} — still waiting on them — click to log a new request`
-                                  : m.lastRequested
-                                  ? `Last requested ${formatDate(m.lastRequested)} — fulfilled — click to log a new request`
-                                  : "Never requested — click to log a request"
-                              }
-                            >
-                              <Bell size={11} />
-                            </button>
                           </div>
-                        </div>
-                      </th>
-                    ))}
+                        </th>
+                      );
+                    })}
                     <th className="ct-th-demand" title="Full-time equivalent">FTE</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {activeProjects.map((p) => (
-                    <tr key={p.id}>
-                      <td className="ct-td-name" title={p.name}>
-                        <span className="ct-dot" style={{ background: p.color }} />
-                        <span className="ct-td-name-text">{p.name}</span>
-                      </td>
-                      {sortedMembers.map((m) => {
-                        const val = (data.allocations[m.id] || {})[p.id] || 0;
-                        return (
-                          <td key={m.id} className={m.id === currentUserId ? "ct-td-cell ct-col-self" : "ct-td-cell"}>
-                            {val ? `${val}%` : <span className="ct-td-empty">–</span>}
+                {projectGroups.map((g) => (
+                  <tbody key={g.key} className="ct-group">
+                    {g.multi && (
+                      <tr className="ct-group-row">
+                        <td colSpan={sortedMembers.length + 2}>
+                          <span className="ct-group-label">
+                            <span className="ct-dot" style={{ background: g.color }} />
+                            {g.key}
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                    {g.projects.map((p) => {
+                      const pTotal = projectTotal(p.id);
+                      return (
+                        <tr key={p.id} className="ct-alloc-row">
+                          <td className={g.multi ? "ct-td-name ct-td-name-grouped" : "ct-td-name"} title={p.name}>
+                            {!g.multi && <span className="ct-dot" style={{ background: p.color }} />}
+                            <span className="ct-td-name-text">{g.multi ? stripGroupPrefix(p.name) : p.name}</span>
                           </td>
-                        );
-                      })}
-                      <td className="ct-td-demand">{formatFTE(projectTotal(p.id))}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                          {sortedMembers.map((m) => {
+                            const val = (data.allocations[m.id] || {})[p.id] || 0;
+                            return (
+                              <td key={m.id} className={m.id === currentUserId ? "ct-td-cell ct-col-self" : "ct-td-cell"}>
+                                {val ? <span className="ct-heat" style={heatStyle(val)}>{val}%</span> : null}
+                              </td>
+                            );
+                          })}
+                          <td className="ct-td-demand">
+                            <span className="ct-fte-cell">
+                              <span className="ct-fte-mini" aria-hidden="true">
+                                <span style={{ width: `${maxProjectTotal ? (pTotal / maxProjectTotal) * 100 : 0}%`, background: p.color }} />
+                              </span>
+                              {formatFTE(pTotal)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                ))}
                 <tfoot>
                   <tr>
                     <td className="ct-td-name ct-foot-label">Total</td>
                     {sortedMembers.map((m) => {
                       const total = totalFor(m.id);
                       return (
-                        <td key={m.id} className={m.id === currentUserId ? "ct-td-total ct-col-self" : "ct-td-total"} style={{ color: statusColor(total) }}>
-                          {total}%
+                        <td key={m.id} className={m.id === currentUserId ? "ct-td-total ct-col-self" : "ct-td-total"}>
+                          {total === 100 ? (
+                            <span className="ct-total-ok"><Check size={12} strokeWidth={2.6} /> 100%</span>
+                          ) : (
+                            <span className={total > 100 ? "ct-total-flag ct-total-over" : "ct-total-flag"} title={total > 100 ? `${total - 100}% over capacity` : `${100 - total}% unallocated`}>
+                              {total}%
+                            </span>
+                          )}
                         </td>
                       );
                     })}
@@ -1426,7 +1546,15 @@ export default function CapacityTracker() {
                 </tfoot>
               </table>
             </div>
-            <p className="ct-caption">FTE = full-time equivalent, the sum of allocated % on a project divided by 100.</p>
+            <div className="ct-table-foot">
+              <p className="ct-caption">FTE = full-time equivalent, the sum of allocated % on a project divided by 100.</p>
+              <div className="ct-heat-legend" aria-label="Allocation color scale">
+                <span>Allocation</span>
+                {[10, 25, 45, 60, 70].map((v) => (
+                  <span key={v} className="ct-heat ct-heat-sm" style={heatStyle(v)}>{v === 70 ? "70+" : v}</span>
+                ))}
+              </div>
+            </div>
           </section>
 
           {activeProjects.length > 0 && (
@@ -1480,14 +1608,6 @@ export default function CapacityTracker() {
       )}
 
       </div>
-
-      <button
-        type="button"
-        className="ct-network-link"
-        onClick={() => setShowNetworkDiagram(true)}
-      >
-        Network diagram
-      </button>
 
       {showNetworkDiagram && (
         <div className="ct-network-backdrop" onClick={() => setShowNetworkDiagram(false)}>
@@ -2552,17 +2672,19 @@ function Style() {
   return (
     <style>{`
       .ct-app {
-        --bg: #ECEEE7;
+        --bg: #F6F4EF;
         --surface: #FFFFFF;
-        --ink: #1B2320;
-        --ink-soft: #58635C;
-        --line: #D9DCD1;
-        --c-teal: #1F6F63;
-        --c-amber: #B9791F;
-        --c-danger: #C1443C;
-        font-family: "IBM Plex Sans", -apple-system, sans-serif;
+        --ink: #15181D;
+        --ink-soft: #6B6760;
+        --line: #E4E0D8;
+        --c-teal: #1F6B5C;
+        --c-amber: #96600F;
+        --c-danger: #B03A2E;
+        font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
         color: var(--ink);
-        background: linear-gradient(180deg, #9AC6E2 0%, #263138 100%);
+        background: var(--bg);
         width: 100%;
         min-height: 100vh;
         margin: 0;
@@ -2693,7 +2815,7 @@ function Style() {
       .ct-trend-down { color: var(--c-danger); }
       .ct-th-sub { display: block; font-size: 10.5px; font-weight: 400; color: var(--ink-soft); margin-top: 2px; }
       .ct-update-log { margin-top: 22px; }
-      .ct-update-log h3 { font-family: "Space Grotesk", sans-serif; font-size: 14px; margin: 0 0 8px; }
+      .ct-update-log h3 { font-family: "Fraunces", Georgia, serif; font-size: 14px; margin: 0 0 8px; }
       .ct-update-log-date { display: block; white-space: nowrap; }
       .ct-update-log-source { display: block; font-size: 11.5px; color: var(--ink-soft); }
       .ct-update-log-table td, .ct-update-log-table th { vertical-align: top; }
@@ -2709,7 +2831,7 @@ function Style() {
       .ct-topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
       .ct-brand { display: flex; align-items: center; gap: 10px; }
       .ct-brand-mark { width: 36px; height: 36px; border-radius: 8px; background: var(--c-teal); color: #fff; display: flex; align-items: center; justify-content: center; }
-      .ct-brand h1 { font-family: "Space Grotesk", sans-serif; font-size: 19px; line-height: 1.25; margin: 0; letter-spacing: -0.01em; max-width: 420px; }
+      .ct-brand h1 { font-family: "Fraunces", Georgia, serif; font-size: 19px; line-height: 1.25; margin: 0; letter-spacing: -0.01em; max-width: 420px; }
       .ct-brand p { margin: 2px 0 0; font-size: 13px; color: var(--ink-soft); }
       .ct-topbar-actions { display: flex; align-items: center; gap: 12px; }
       .ct-topbar-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
@@ -2727,7 +2849,7 @@ function Style() {
       .ct-btn-primary { background: var(--c-teal); color: #fff; border-color: var(--c-teal); font-weight: 500; padding: 9px 16px; }
       .ct-btn-primary:hover { background: #185349; border-color: #185349; }
       .ct-selfserve-confirm { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--c-teal); font-weight: 500; }
-      .ct-save { font-size: 12px; color: var(--ink-soft); font-family: "IBM Plex Mono", monospace; }
+      .ct-save { font-size: 12px; color: var(--ink-soft); font-family: inherit; }
       .ct-save-error { color: var(--c-danger); }
       .ct-retired-tag { font-size: 10.5px; font-weight: 500; color: var(--ink-soft); background: #EEF0EA; border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; white-space: nowrap; }
       .ct-retired-row { color: var(--ink-soft); }
@@ -2746,7 +2868,7 @@ function Style() {
       .ct-trend-person:hover { border-color: var(--c-teal); }
       .ct-trend-person:focus-visible { outline: 2px solid var(--c-teal); outline-offset: 1px; }
       .ct-trend-person-on { background: var(--c-teal); border-color: var(--c-teal); color: #fff; }
-      .ct-trend-person-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 14px; }
+      .ct-trend-person-name { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 14px; }
       .ct-trend-person-date { font-size: 11.5px; color: var(--ink-soft); }
       .ct-trend-person-on .ct-trend-person-date { color: rgba(255,255,255,0.85); }
       .ct-trend-table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
@@ -2756,7 +2878,7 @@ function Style() {
       .ct-trend-td-name { min-width: 200px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .ct-trend-td-name > * { vertical-align: middle; }
       .ct-trend-td-name > .ct-dot { display: inline-block; margin-right: 7px; }
-      .ct-trend-cell { text-align: right; font-family: "IBM Plex Mono", monospace; white-space: nowrap; }
+      .ct-trend-cell { text-align: right; font-family: inherit; white-space: nowrap; }
       .ct-trend-carried { color: #A5ACA3 !important; }
       .ct-trend-none { color: #C5CBC2; }
       .ct-trend-total { font-weight: 600; border-top: 1px solid var(--line); }
@@ -2773,7 +2895,7 @@ function Style() {
       .ct-inline-form input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; font-family: inherit; min-width: 160px; }
       .ct-empty { margin-top: 14px; padding: 20px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; color: var(--ink-soft); font-size: 14px; }
       .ct-panel { margin-top: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
-      .ct-panel h2 { font-family: "Space Grotesk", sans-serif; font-size: 15px; margin: 0 0 8px; }
+      .ct-panel h2 { font-family: "Fraunces", Georgia, serif; font-size: 15px; margin: 0 0 8px; }
       .ct-panel-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
       .ct-panel-head-row h2 { margin: 0 0 8px; }
       .ct-recolor-confirm { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-soft); flex-wrap: wrap; }
@@ -2784,7 +2906,7 @@ function Style() {
       .ct-editor { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
       .ct-editor-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
       .ct-editor-head h3 { font-size: 14px; margin: 0; font-weight: 600; }
-      .ct-total { font-family: "IBM Plex Mono", monospace; font-size: 16px; font-weight: 600; }
+      .ct-total { font-family: inherit; font-size: 16px; font-weight: 600; }
       .ct-hint { font-size: 13px; color: var(--ink-soft); }
       .ct-sliders { display: flex; flex-direction: column; gap: 4px; }
       .ct-alloc-cards {
@@ -2830,7 +2952,7 @@ function Style() {
         min-width: 0;
         border: none;
         text-align: center;
-        font-family: "IBM Plex Mono", monospace;
+        font-family: inherit;
         font-size: 14px;
         font-weight: 600;
         color: var(--ink);
@@ -2854,7 +2976,7 @@ function Style() {
       .ct-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
       .ct-proj-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ct-slider-row input[type=range] { width: 100%; accent-color: var(--c-teal); }
-      .ct-num { width: 48px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-family: "IBM Plex Mono", monospace; font-size: 12px; text-align: right; }
+      .ct-num { width: 48px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-family: inherit; font-size: 12px; text-align: right; }
       .ct-pct { font-size: 12px; color: var(--ink-soft); }
       .ct-msg { margin-top: 8px; font-size: 12px; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; }
       .ct-msg-danger { background: #FBEBE9; color: var(--c-danger); }
@@ -2864,7 +2986,7 @@ function Style() {
       .ct-updated-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--ink-soft); flex-wrap: wrap; }
       .ct-updated-row input[type=date] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 12px; background: var(--surface); }
       .ct-req-sep { margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
-      .ct-req-date { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink); }
+      .ct-req-date { font-family: inherit; font-size: 12px; color: var(--ink); }
       .ct-req-fulfilled { font-family: inherit; color: var(--c-teal); font-weight: 500; }
       .ct-req-btn { color: var(--ink-soft); }
       .ct-req-btn:hover { color: var(--c-teal); border-color: var(--c-teal); }
@@ -2927,7 +3049,7 @@ function Style() {
         position: sticky;
         right: 0;
         z-index: 2;
-        font-family: "IBM Plex Mono", monospace;
+        font-family: inherit;
         font-weight: 600;
         color: var(--ink-soft);
         box-shadow: -6px 0 6px -6px rgba(0,0,0,0.12);
@@ -2952,9 +3074,9 @@ function Style() {
       .ct-foot-label { font-weight: 600; }
       .ct-table tfoot td { border-bottom: none; border-top: 1px solid var(--line); }
       .ct-table tfoot .ct-td-demand { background: var(--surface); }
-      .ct-td-cell { font-family: "IBM Plex Mono", monospace; color: var(--ink); }
+      .ct-td-cell { font-family: inherit; color: var(--ink); }
       .ct-td-empty { color: var(--line); }
-      .ct-td-total { font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--ink-soft); }
+      .ct-td-total { font-family: inherit; font-weight: 600; color: var(--ink-soft); }
       .ct-td-name .ct-remove { opacity: 0; transition: opacity 0.1s; margin-left: auto; flex-shrink: 0; }
       .ct-table tbody tr:hover .ct-remove { opacity: 1; }
 
@@ -2962,22 +3084,7 @@ function Style() {
       .ct-project-row { display: grid; grid-template-columns: 10px 130px 1fr 56px 20px; align-items: center; gap: 10px; }
       .ct-demand-track { height: 8px; background: #EEF0E8; border-radius: 6px; overflow: hidden; }
       .ct-demand-fill { height: 100%; }
-      .ct-fte { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-soft); text-align: right; }
-      .ct-network-link {
-        position: fixed;
-        bottom: 16px;
-        right: 20px;
-        z-index: 40;
-        background: rgba(0, 55, 89, 0.85);
-        color: #FFFFFF;
-        border: none;
-        border-radius: 20px;
-        padding: 7px 14px;
-        font-size: 12px;
-        font-family: inherit;
-        cursor: pointer;
-      }
-      .ct-network-link:hover { background: #003759; }
+      .ct-fte { font-family: inherit; font-size: 12px; color: var(--ink-soft); text-align: right; }
       .ct-network-backdrop {
         position: fixed;
         inset: 0;
@@ -2998,7 +3105,7 @@ function Style() {
         overflow-y: auto;
       }
       .ct-network-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-      .ct-network-modal-head h2 { font-family: "Space Grotesk", sans-serif; font-size: 16px; margin: 0; color: var(--ink); }
+      .ct-network-modal-head h2 { font-family: "Fraunces", Georgia, serif; font-size: 16px; margin: 0; color: var(--ink); }
       .ct-diagram-visual {
         background: linear-gradient(180deg, #9AC6E2 0%, #263138 100%);
         border-radius: 10px;
@@ -3009,6 +3116,94 @@ function Style() {
       .ct-diagram-security-title { font-size: 14px; font-weight: 700; color: var(--ink); margin: 0 0 8px; }
       .ct-diagram-security-text { font-size: 13px; color: var(--ink-soft); line-height: 1.6; margin: 0 0 8px; }
       .ct-diagram-security-text:last-child { margin-bottom: 0; }
+
+      /* ---- Ink & ivory theme (dashboard redesign) ---- */
+      .ct-header { background: #14171C; padding: 26px 28px 0; }
+      .ct-brand { gap: 14px; }
+      .ct-brand-mark { width: 42px; height: 42px; border-radius: 12px; }
+      .ct-brand h1 { font-family: "Fraunces", Georgia, serif; font-weight: 500; font-size: 24px; letter-spacing: -0.01em; max-width: none; }
+      .ct-header .ct-brand p { color: #A9A49A; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 5px; }
+      .ct-topbar { align-items: center; }
+      .ct-header-links { gap: 10px; }
+      .ct-btn-add { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px; border-radius: 10px; border: none; background: #F3F1EC; color: #14171C; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+      .ct-btn-add:hover { background: #FFFFFF; }
+      .ct-menu { position: relative; }
+      .ct-menu-btn { width: 38px; height: 38px; border-radius: 10px; border: 1px solid #2E333B; background: transparent; color: #E6E2DA; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s; }
+      .ct-menu-btn:hover, .ct-menu-btn[aria-expanded="true"] { background: #22262D; }
+      .ct-btn-add:focus-visible, .ct-menu-btn:focus-visible { outline: 2px solid #7FB8A9; outline-offset: 2px; }
+      .ct-menu-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 60; min-width: 220px; background: #FFFFFF; border-radius: 14px; padding: 6px; box-shadow: 0 2px 6px rgba(20,23,28,0.08), 0 18px 48px rgba(20,23,28,0.18); }
+      .ct-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: none; background: none; border-radius: 8px; font: inherit; font-size: 13px; color: var(--ink); text-align: left; cursor: pointer; }
+      .ct-menu-item svg { color: var(--ink-soft); flex-shrink: 0; }
+      .ct-menu-item:hover { background: #F4F1EB; }
+      .ct-menu-item:focus-visible { outline: 2px solid var(--c-teal); outline-offset: -2px; }
+      .ct-menu-item-on, .ct-menu-item-on svg { color: var(--c-teal); }
+      .ct-menu-item-on { font-weight: 600; }
+      .ct-menu-sep { height: 1px; background: var(--line); margin: 6px 4px; }
+      .ct-nav { border-top: none; margin-top: 22px; }
+      .ct-tab { color: #A9A49A; }
+      .ct-tab::after { background: #7FB8A9; height: 2px; border-radius: 2px 2px 0 0; }
+      .ct-tab:focus-visible { outline-color: #7FB8A9; }
+      .ct-util:focus-visible { outline-color: #7FB8A9; }
+      .ct-content-wrap { padding: 28px 28px 48px; }
+      .ct-panel { margin-top: 22px; border: none; border-radius: 18px; padding: 22px 24px; box-shadow: 0 1px 2px rgba(20,23,28,0.04), 0 10px 32px rgba(20,23,28,0.06); }
+      .ct-content-wrap > .ct-panel:first-child { margin-top: 0; }
+      .ct-panel h2 { font-weight: 500; font-size: 19px; margin-bottom: 14px; }
+      .ct-identity label { font-size: 12px; }
+      .ct-identity select { border-radius: 10px; padding: 8px 12px; background: #FAF8F4; }
+      .ct-btn { border-radius: 10px; }
+
+      .ct-table-wrap { border: none; border-radius: 0; }
+      .ct-table { font-size: 13px; }
+      .ct-table th, .ct-table td { border-bottom: 1px solid #F0EDE7; padding: 4px; }
+      .ct-table thead th { background: #FFFFFF; color: var(--ink); vertical-align: bottom; padding: 10px 4px 12px; border-bottom: 1px solid var(--line); }
+      .ct-table thead th.ct-th-name { width: 210px; padding-left: 12px; color: var(--ink-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.14em; }
+      .ct-table thead th.ct-th-demand { color: var(--ink-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-align: right; padding-right: 14px; }
+      .ct-th-proj { width: 92px; }
+      .ct-th-proj-inner { gap: 5px; }
+      .ct-avatar { width: 30px; height: 30px; border-radius: 50%; background: #EFECE6; color: var(--ink); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; display: flex; align-items: center; justify-content: center; }
+      .ct-th-person { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+      .ct-th-meta-row { margin-top: 0; gap: 2px; min-height: 22px; }
+      .ct-th-date { color: var(--ink-soft); font-size: 11px; font-weight: 400; }
+      .ct-stale-pill { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 999px; background: #F7E6DF; color: #8E3519; white-space: nowrap; }
+      .ct-req-bell { color: var(--ink-soft); opacity: 0; transition: opacity 0.15s; border-radius: 4px; margin-top: 0; }
+      .ct-th-proj:hover .ct-req-bell, .ct-req-bell:focus-visible, .ct-req-bell-active { opacity: 1; }
+      .ct-req-bell:focus-visible { outline: 2px solid var(--c-teal); }
+      @media (hover: none) { .ct-req-bell { opacity: 1; } }
+      .ct-th-demand, .ct-td-demand { width: 100px; box-shadow: none; }
+      .ct-table td.ct-td-demand { color: var(--ink); font-weight: 600; text-align: right; padding-right: 14px; }
+      .ct-fte-cell { display: inline-flex; align-items: center; gap: 10px; }
+      .ct-fte-mini { width: 36px; height: 4px; border-radius: 4px; background: #EFECE6; overflow: hidden; display: inline-block; }
+      .ct-fte-mini span { display: block; height: 100%; border-radius: 4px; }
+      .ct-table .ct-group-row td { text-align: left; padding: 18px 12px 6px; border-bottom: none; background: #FFFFFF; }
+      .ct-group-label { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); position: sticky; left: 12px; }
+      .ct-table td.ct-td-name { padding-left: 12px; font-weight: 400; font-size: 13.5px; gap: 9px; min-height: 46px; }
+      .ct-table td.ct-td-name-grouped { padding-left: 30px; }
+      .ct-alloc-row td { height: 46px; }
+      .ct-table tbody tr.ct-alloc-row:hover td, .ct-table tbody tr.ct-alloc-row:hover .ct-td-demand { background: #FAF8F4; }
+      .ct-heat { display: inline-flex; align-items: center; justify-content: center; min-width: 50px; height: 28px; padding: 0 8px; border-radius: 8px; font-size: 12.5px; font-weight: 500; }
+      .ct-heat-sm { min-width: 34px; height: 20px; padding: 0 6px; border-radius: 5px; font-size: 10.5px; }
+      .ct-col-self { background: #F7F5F0; }
+      .ct-table tfoot td { border-top: 1px solid var(--line); padding-top: 12px; padding-bottom: 12px; }
+      .ct-table td.ct-foot-label { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+      .ct-total-ok { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 400; color: var(--ink-soft); }
+      .ct-total-ok svg { color: var(--c-teal); }
+      .ct-total-flag { font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: #FBF0DC; color: #7A4C0A; }
+      .ct-total-over { background: #F7E6DF; color: #8E3519; }
+      .ct-table-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin-top: 14px; }
+      .ct-table-foot .ct-caption { margin: 0; }
+      .ct-heat-legend { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-soft); }
+      .ct-heat-legend > span:first-child { margin-right: 4px; }
+
+      .ct-projects { gap: 12px; }
+      .ct-project-row { grid-template-columns: 8px minmax(140px, 230px) 1fr 64px; gap: 12px; }
+      .ct-proj-name { font-size: 13.5px; }
+      .ct-demand-track { height: 6px; background: #F0EDE7; }
+      .ct-demand-fill { border-radius: 6px; }
+      .ct-fte { font-weight: 600; color: var(--ink); }
+      .ct-dot { width: 8px; height: 8px; }
+      .ct-alert { background: #F7E6DF; color: #8E3519; border: none; border-radius: 14px; }
+      .ct-panel.ct-alert-panel { padding: 0; background: none; box-shadow: none; }
+      .ct-diagram-visual { background: #14171C; }
       @media (max-width: 480px) {
         .ct-slider-row { grid-template-columns: 8px 80px 1fr 40px 10px; }
         .ct-member-row { grid-template-columns: 90px 1fr 44px 18px; }
