@@ -1737,6 +1737,7 @@ function AllocEditor({ projects, alloc, onCommit }) {
         )}
       </div>
 
+      <div className="ct-ae-body">
       <div className="ct-ae-list">
         <div className="ct-ae-list-head">
           <h4>
@@ -1785,6 +1786,7 @@ function AllocEditor({ projects, alloc, onCommit }) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -3338,13 +3340,19 @@ function Style() {
       .ct-ae-legend-item { display: inline-flex; align-items: center; gap: 6px; }
       .ct-ae-legend-item b { font-weight: 600; }
       .ct-ae-legend-gap { color: var(--ink-soft); }
+      .ct-ae-body { display: grid; grid-template-columns: minmax(0, 460px); gap: 0 40px; align-items: start; }
+      @media (min-width: 1400px) {
+        .ct-ae-body { grid-template-columns: minmax(0, 460px) minmax(0, 1fr); }
+        .ct-ae-body .ct-ae-add { margin-top: 24px; }
+      }
       .ct-ae-list { margin-top: 24px; }
       .ct-ae-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 2px 8px; border-bottom: 1px solid var(--line); }
       .ct-ae-list-head h4, .ct-ae-add h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
       .ct-ae-list-head h4 span { font-weight: 400; color: var(--ink-soft); }
       .ct-ae-hint { font-size: 12px; color: var(--ink-soft); }
       .ct-ae-empty { margin: 14px 2px; }
-      .ct-ae-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 40px; align-items: center; gap: 14px; min-height: 58px; padding: 0 2px; border-bottom: 1px solid #F2EFEA; }
+      .ct-ae-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 40px; align-items: center; gap: 14px; min-height: 58px; padding: 0 6px 0 8px; border-bottom: 1px solid #F2EFEA; border-radius: 8px; }
+      .ct-ae-row:hover, .ct-ae-row:focus-within { background: #FAF8F4; }
       .ct-ae-name-cell { display: flex; align-items: center; gap: 11px; min-width: 0; }
       .ct-ae-name-text { min-width: 0; }
       .ct-ae-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
